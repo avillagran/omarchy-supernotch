@@ -356,6 +356,10 @@ case "${1:-}" in
   weather-status)  omarchy-weather-status ;;
   weather-icon)    omarchy-weather-icon ;;
   weather-location) omarchy-weather-location ;;
+  weather-state)   cat "$HOME/.local/state/omarchy/settings/weather.json" 2>/dev/null || echo '{}' ;;
+  weather-fetch)   # $2 = wttr.in query (lat,lon or "City,Country"); prints j1 JSON
+    q="${2:-Santiago,Chile}"
+    curl -fsS --max-time 12 "https://wttr.in/${q}?format=j1" 2>/dev/null || echo '{}' ;;
   set-enabled)      write_pref "notchPlugins" "$2" ;;
   set-notch)       write_pref "notchPlugins" "$2" ;;
   set-order)       write_pref "pluginOrder" "$2" ;;
