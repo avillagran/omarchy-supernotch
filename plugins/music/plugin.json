@@ -1,0 +1,10 @@
+{
+  "key": "music",
+  "icon": "🎵",
+  "barIcon": "󰝚",
+  "label": { "en": "Media", "es": "Medios" },
+  "ui": "music.qml",
+  "refresh": ["mpris"],
+  "order": 0,
+  "preferredHeight": 300
+}

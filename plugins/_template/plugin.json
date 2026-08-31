@@ -1,0 +1,7 @@
+{
+  "key": "hello",
+  "icon": "✦",
+  "label": { "en": "Hello", "es": "Hola" },
+  "ui": "hello.qml",
+  "refresh": []
+}

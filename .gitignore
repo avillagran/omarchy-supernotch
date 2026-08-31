@@ -1,0 +1,10 @@
+# Reference media / screenshots (large, not source)
+.ref/
+
+# Editor / OS cruft
+*.swp
+.DS_Store
+*.log
+
+# Local runtime state
+*.lock
