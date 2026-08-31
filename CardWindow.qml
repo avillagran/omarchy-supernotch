@@ -38,7 +38,19 @@ PanelWindow {
   anchors.top: true; anchors.left: true; anchors.right: true; anchors.bottom: true
   mask: Region { width: root.screenW; height: root.screenH }
 
-  readonly property var anchorWindow: anchorItem ? anchorItem.QsWindow.window : null
+  // Keyboard focus: without this the layer-shell never receives key events
+  // from the compositor, so PanelKeyCatcher's Keys.onPressed never fires.
+  // Prime with Exclusive on open then settle to OnDemand (mirrors Omarchy's
+  // KeyboardPanel) so Hyprland routes keys here while open but releases
+  // pointer hit-testing afterwards.
+  WlrLayershell.namespace: "omarchy-supernotch"
+  WlrLayershell.layer: WlrLayer.Overlay
+  WlrLayershell.keyboardFocus: open ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
+  onOpenChanged: {
+    if (root.open && root.focusTarget) Qt.callLater(function () {
+      if (root.open && root.focusTarget) root.focusTarget.forceActiveFocus()
+    })
+  }
   readonly property string barPos: bar ? bar.position : "top"
   readonly property real barW: anchorWindow ? anchorWindow.width : (screen ? screen.width : 0)
   readonly property real barH: anchorWindow ? anchorWindow.height : 0
