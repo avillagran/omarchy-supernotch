@@ -1,7 +1,7 @@
 {
   "key": "clipboard",
   "icon": "📋",
-  "barIcon": "󰆐",
+  "barIcon": "⎘",
   "label": {
     "en": "Clipboard",
     "es": "Portapapeles"

@@ -1,7 +1,7 @@
 {
   "key": "weather",
   "icon": "⛅",
-  "barIcon": "",
+  "barIcon": "☀",
   "label": { "en": "Weather", "es": "Clima" },
   "ui": "weather.qml",
   "refresh": [],

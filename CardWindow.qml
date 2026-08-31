@@ -45,6 +45,7 @@ PanelWindow {
   WlrLayershell.namespace: "omarchy-supernotch"
   WlrLayershell.layer: WlrLayer.Overlay
   WlrLayershell.keyboardFocus: open ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
+  readonly property var anchorWindow: anchorItem ? anchorItem.QsWindow.window : null
   readonly property string barPos: bar ? bar.position : "top"
   readonly property real barW: anchorWindow ? anchorWindow.width : (screen ? screen.width : 0)
   readonly property real barH: anchorWindow ? anchorWindow.height : 0

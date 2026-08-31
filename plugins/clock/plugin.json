@@ -1,7 +1,7 @@
 {
   "key": "clock",
   "icon": "🕐",
-  "barIcon": "",
+  "barIcon": "◴",
   "label": { "en": "Clock", "es": "Reloj" },
   "ui": "clock.qml",
   "refresh": [],
