@@ -44,7 +44,9 @@ PanelWindow {
   // onOpenChanged below gives Qt the in-surface focus target).
   WlrLayershell.namespace: "omarchy-supernotch"
   WlrLayershell.layer: WlrLayer.Overlay
-  WlrLayershell.keyboardFocus: open ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
+  // Exclusive focus while open so the compositor routes all keys to this
+  // layer; Esc (handled by PanelKeyCatcher) closes it and releases focus.
+  WlrLayershell.keyboardFocus: open ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
   readonly property var anchorWindow: anchorItem ? anchorItem.QsWindow.window : null
   readonly property string barPos: bar ? bar.position : "top"
   readonly property real barW: anchorWindow ? anchorWindow.width : (screen ? screen.width : 0)
