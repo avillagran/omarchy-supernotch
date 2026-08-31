@@ -124,8 +124,8 @@ Item {
       }
       ThemedSlider {
         id: cardWSlider
-        from: 5; to: 90
-        value: root ? root.notchWidthPct : 42
+        from: root ? root.minNotchPct : 5; to: 90
+        value: root ? root.notchWidthPct : 20
         onApply: function (v) {
           if (!root) return
           root.notchWidthPct = Math.round(v)

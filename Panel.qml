@@ -66,8 +66,11 @@ Panel {
   // Deriving the pixel size from the live monitor width means the notch
   // automatically re-sizes (and re-appears) when you switch monitors/resolutions.
   readonly property int monitorW: (panel && panel.screenW) ? panel.screenW : (Screen.width > 0 ? Screen.width : 1920)
-  property real notchWidthPct: 42   // % of monitor width → the BAR WIDGET (pill)
-  property int notchWidth: Math.max(160, Math.min(90, notchWidthPct) / 100 * monitorW)
+  property real notchWidthPct: 20   // % of monitor width → the BAR WIDGET (pill). Default 20% so the
+                                    // widget is always visible even on a MacBook (a too-narrow pill
+                                    // would hide behind / blend into the physical notch).
+  property real minNotchPct: 5      // raised to 20 on Apple hardware (see loadPrefs / is-macbook)
+  property int notchWidth: Math.max(160, Math.min(90, Math.max(notchWidthPct, minNotchPct)) / 100 * monitorW)
   property real panelWidthPct: 70    // % of monitor width → the OPENED CARD (independent)
   property int panelWidth: Math.max(160, Math.min(90, panelWidthPct) / 100 * monitorW)
   property int notchHeight: 388
@@ -116,6 +119,15 @@ Panel {
         root.recomputeNotch()
         root.pushBar()
       } catch (e) {}
+    })
+    run(["is-macbook"], function (out) {
+      // On Apple hardware the physical notch hides a too-narrow pill, so keep
+      // a 20% floor; elsewhere 5% is fine.
+      if ((out || "").trim() === "1") root.minNotchPct = 20
+      else root.minNotchPct = 5
+      // re-clamp the loaded width against the floor
+      root.notchWidth = Math.max(160, Math.min(90, Math.max(root.notchWidthPct, root.minNotchPct)) / 100 * root.monitorW)
+      root.pushBar()
     })
     run(["notch-detect"], function (out) {
       try {
