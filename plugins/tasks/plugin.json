@@ -1,0 +1,15 @@
+{
+  "key": "tasks",
+  "icon": "✓",
+  "barIcon": "",
+  "label": {
+    "en": "Tasks",
+    "es": "Tareas"
+  },
+  "ui": "tasks.qml",
+  "refresh": [
+    "tasks-get"
+  ],
+  "order": 1,
+  "preferredHeight": 340
+}

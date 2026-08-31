@@ -1,0 +1,9 @@
+{
+  "key": "settings",
+  "icon": "⚙",
+  "barIcon": "",
+  "label": { "en": "Settings", "es": "Ajustes" },
+  "ui": "settings.qml",
+  "order": 90,
+  "preferredHeight": 460
+}

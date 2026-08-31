@@ -1,0 +1,368 @@
+#!/usr/bin/env bash
+# omarchy-supernotch — Anclave-style animated notch for Omarchy/Hyprland.
+# Local data engine: MPRIS, clipboard history, tasks, shelf, calendar, keybind.
+# No account, no server. All state lives under $XDG_RUNTIME_DIR.
+
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+PLUGIN_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+PLUGINS_DIR="$PLUGIN_DIR/plugins"
+RUNDIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+STATE_DIR="$RUNDIR/omarchy-supernotch"
+mkdir -p "$STATE_DIR"
+TASKS="$STATE_DIR/tasks.json"
+CLIP="$STATE_DIR/clip.json"
+SHELF_DIR="$STATE_DIR/shelf"
+PREFS="$STATE_DIR/prefs.json"
+mkdir -p "$SHELF_DIR"
+
+export HYPRLAND_INSTANCE_SIGNATURE="${HYPRLAND_INSTANCE_SIGNATURE:-$(ls -1 "$RUNDIR"/hypr/ 2>/dev/null | grep -E '^[0-9a-f]{8}' | head -1)}"
+export XDG_RUNTIME_DIR="$RUNDIR"
+export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-1}"
+
+# ---- safe reads (G12 hardened) ---------------------------------------------
+MAX_READ=262144
+read_file_safe() {
+  local f="$1"
+  python3 - "$f" "$MAX_READ" <<'PY'
+import os, sys, stat
+path, maxb = sys.argv[1], int(sys.argv[2])
+try:
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+except Exception:
+    sys.exit(1)
+try:
+    st = os.fstat(fd)
+    if not stat.S_ISREG(st.st_mode) or st.st_size > maxb:
+        sys.exit(1)
+    data = os.read(fd, maxb)
+    sys.stdout.buffer.write(data)
+finally:
+    os.close(fd)
+PY
+}
+write_json_file() {   # $1=path ; stdin=json ; atomic mktemp+mv
+  local tmp; tmp=$(mktemp -p "$STATE_DIR") || return 1
+  cat > "$tmp" && mv -f "$tmp" "$1"
+}
+
+# ---- quickshell IPC (open/close the notch panel) -------------------------
+qs_pid() { pgrep -f "quickshell -n -p /usr/share/omarchy/shell" | grep -v bash | sort -n | tail -1; }
+qs_ipc() { local p; p=$(qs_pid); [ -n "$p" ] && timeout 5 quickshell ipc --pid "$p" "$@" 2>/dev/null; }
+panel_open()  { qs_ipc call shell summon io.github.avillagran.omarchy-supernotch '{}' >/dev/null 2>&1; }
+panel_close() { qs_ipc call shell hide   io.github.avillagran.omarchy-supernotch >/dev/null 2>&1; }
+panel_state() { # echo "open"/"closed" using the keyboard-panel layer presence
+  timeout 5 hyprctl layers 2>/dev/null | grep -q omarchy-keyboard-panel && echo open || echo closed
+}
+
+# ---- prefs ----------------------------------------------------------------
+# Real notch width by DMI model (px at the panel's native logical width).
+# Hyprland does NOT expose notch geometry at runtime — there is no sensor or
+# Wayland protocol for it — so we map the machine model to the known physical
+# notch size. Override any of this with the manual `notchWidth` pref.
+NOTCH_LOGICAL_W=1728   # logical (scaled) bar width we measure against
+notch_real_px() {      # physical notch width in px at native panel resolution
+  local m; m=$(cat /sys/devices/virtual/dmi/id/product_name 2>/dev/null)
+  case "$m" in
+    Mac14,10|Mac14,9|Mac14,6|Mac14,5) echo 250 ;;   # 14" MBP 2021/2023
+    MacBookAir10,1|MacBookAir10,2)     echo 250 ;;   # 13" M2 Air (notch)
+    Mac13,1|Mac13,2|Mac13,3)            echo 250 ;;   # 13/14/16" MBP 2022
+    Mac14,2|Mac14,3|Mac14,7|Mac14,8)   echo 250 ;;   # 16" MBP
+    *)                                   echo 0   ;;   # unknown: no notch info
+  esac
+}
+notch_detect() {     # prints JSON {real_px, logical_px, model, scaled}
+  local m real scaled
+  m=$(cat /sys/devices/virtual/dmi/id/product_name 2>/dev/null)
+  real=$(notch_real_px)
+  if [ "$real" -gt 0 ]; then
+    # scale physical notch px to our logical bar width (panel native ~3024)
+    scaled=$(python3 -c "print(round($real * $NOTCH_LOGICAL_W / 3024))" 2>/dev/null || echo 125)
+  else
+    scaled=0
+  fi
+  printf '{"real_px":%s,"logical_px":%s,"model":"%s","scaled":%s}\n' "$real" "$NOTCH_LOGICAL_W" "$m" "$scaled"
+}
+# List installed notch plugins: each is a dir under plugins/ with plugin.json.
+# Prints a JSON array of {key,icon,label,ui,refresh,order} sorted by "order".
+list_plugins() {
+  local dir="$PLUGINS_DIR"
+  [ -d "$dir" ] || { echo '[]'; return; }
+  local tmp; tmp=$(mktemp -p "$STATE_DIR")
+  : > "$tmp"
+  for pj in $(find "$dir" -maxdepth 2 -name plugin.json 2>/dev/null); do
+    local pdir; pdir=$(dirname "$pj")
+    local key; key=$(basename "$pdir")
+    case "$key" in _*|.*) continue ;; esac   # skip templates / dotfiles
+    local meta; meta=$(jq -c --arg k "$key" --arg d "$pdir" '. + {key:$k, dir:$d}' "$pj" 2>/dev/null)
+    [ -z "$meta" ] && meta=$(jq -nc --arg k "$key" --arg d "$pdir" '{key:$k,dir:$d,icon:"◇",barIcon:"◇",label:{en:$k,es:$k},ui:($k+".qml")}')
+    printf '%s\n' "$meta" >> "$tmp"
+  done
+  jq -sc 'sort_by(.order // 99)' "$tmp" 2>/dev/null || echo '[]'
+  rm -f "$tmp"
+}
+default_prefs() { echo '{"notchWidth":42,"panelWidth":70,"notchHeight":420,"notchBarWidth":0,"autoHide":true,"clipMask":true,"realNotch":false,"bg":"aurora","bgBlur":0,"bgOpacity":1.0,"notchInset":0,"notchPlugins":[],"pluginOrder":[]}'; }
+read_prefs() {
+  local raw; raw=$(read_file_safe "$PREFS")
+  if [ -n "$raw" ]; then printf '%s' "$raw" | jq -c . 2>/dev/null || default_prefs
+  else default_prefs; fi
+}
+write_pref() {
+  local cur; cur=$(read_prefs)
+  local tmp; tmp=$(mktemp -p "$STATE_DIR")
+  # Quote the value as a JSON string unless it is already a number/bool/array/object.
+  local v="$2"
+  case "$v" in
+    true|false|''|*[!0-9.eE+-]*) v="\"$v\"" ;;
+  esac
+  # Re-detect JSON arrays/objects (they got quoted above if they contained non-numeric chars)
+  if printf '%s' "$v" | jq -e . >/dev/null 2>&1 && [ "${v:0:1}" != '"' ]; then
+    : # already valid JSON (number/bool/array/object) — keep as-is
+  elif [ "${2:0:1}" = '[' ] || [ "${2:0:1}" = '{' ]; then
+    v="$2" # pass through raw JSON array/object
+  fi
+  if printf '%s' "$cur" | jq --arg k "$1" --argjson v "$v" '. + {($k): $v}' > "$tmp" 2>/dev/null; then
+    mv -f "$tmp" "$PREFS"
+  else rm -f "$tmp"; fi
+}
+
+# ---- MPRIS ----------------------------------------------------------------
+mpris_player() {
+  # pick playing player, else any; print "name|bus" or ""
+  gdbus list-names 2>/dev/null | grep -i 'org.mpris.MediaPlayer2' | sed 's/^[[:space:]]*//' | while read -r n; do
+    local st; st=$(gdbus call --session --dest "$n" --object-path /org/mpris/MediaPlayer2 \
+      --method org.freedesktop.DBus.Properties.Get org.mpris.MediaPlayer2.Player PlaybackStatus 2>/dev/null)
+    if [ "$st" = "(<'Playing'>)" ]; then echo "$n"; return; fi
+  done | head -n1
+  gdbus list-names 2>/dev/null | grep -i 'org.mpris.MediaPlayer2' | sed 's/^[[:space:]]*//' | head -n1
+}
+mpris_status() {
+  local p; p=$(mpris_player)
+  if [ -z "$p" ]; then echo '{"playing":false,"title":"","artist":"","album":"","art":"","length":0,"position":0,"canPlay":false,"canPause":false,"canGoNext":false,"canGoPrev":false,"player":"","hasPlayer":false}'; return; fi
+  local meta pos playing canplay canpause cannext canprev
+  meta=$(gdbus call --session --dest "$p" --object-path /org/mpris/MediaPlayer2 \
+    --method org.freedesktop.DBus.Properties.GetAll org.mpris.MediaPlayer2.Player 2>/dev/null)
+  playing=$(printf '%s' "$meta" | grep -o "PlaybackStatus: <'[^']*'>" | sed "s/PlaybackStatus: <'\([^']*\)'>/\1/")
+  pos=$(gdbus call --session --dest "$p" --object-path /org/mpris/MediaPlayer2 \
+    --method org.freedesktop.DBus.Properties.Get org.mpris.MediaPlayer2.Player Position 2>/dev/null | grep -o '<[0-9]*>' | tr -d '<>')
+  canplay=$(printf '%s' "$meta" | grep -q "CanPlay: <true>" && echo true || echo false)
+  canpause=$(printf '%s' "$meta" | grep -q "CanPause: <true>" && echo true || echo false)
+  cannext=$(printf '%s' "$meta" | grep -q "CanGoNext: <true>" && echo true || echo false)
+  canprev=$(printf '%s' "$meta" | grep -q "CanGoPrevious: <true>" && echo true || echo false)
+  # Extract metadata fields (best-effort parsing of gdbus dict output)
+  local title artist album length
+  title=$(printf '%s' "$meta" | grep -o "xesam:title: <'[^']*'>" | head -n1 | sed "s/xesam:title: <'\([^']*\)'>/\1/")
+  artist=$(printf '%s' "$meta" | grep -o "xesam:artist: \['<[^']*'>" | head -n1 | sed "s/xesam:artist: \['<\([^']*\)'>/\1/")
+  album=$(printf '%s' "$meta" | grep -o "xesam:album: <'[^']*'>" | head -n1 | sed "s/xesam:album: <'\([^']*\)'>/\1/")
+  length=$(printf '%s' "$meta" | grep -o "mpris:length: <[0-9]*>" | sed "s/mpris:length: <\([0-9]*\)>/\1/")
+  art=$(printf '%s' "$meta" | grep -o "mpris:artUrl: <'[^']*'>" | head -n1 | sed "s/mpris:artUrl: <'\([^']*\)'>/\1/")
+  [ -z "$length" ] && length=0
+  [ -z "$pos" ] && pos=0
+  local pl=$(printf '%s' "$p" | sed 's#org.mpris.MediaPlayer2.##')
+  jq -nc --arg playing "$playing" --arg title "$title" --arg artist "$artist" --arg album "$album" --arg art "$art" \
+    --argjson length "${length:-0}" --argjson position "${pos:-0}" \
+    --argjson canplay "$canplay" --argjson canpause "$canpause" --argjson cannext "$cannext" --argjson canprev "$canprev" \
+    --arg player "$pl" --argjson hasPlayer true \
+    '{playing: ($playing=="Playing"), title:$title, artist:$artist, album:$album, art:$art, length:$length, position:$position, canPlay:$canplay, canPause:$canpause, canGoNext:$cannext, canGoPrev:$canprev, player:$player, hasPlayer:$hasPlayer}'
+}
+mpris_send() {
+  local p; p=$(mpris_player); [ -z "$p" ] && return 1
+  gdbus call --session --dest "$p" --object-path /org/mpris/MediaPlayer2 \
+    --method org.mpris.MediaPlayer2.Player "$1" >/dev/null 2>&1
+}
+mpris_seek() {
+  local p; p=$(mpris_player); [ -z "$p" ] && return 1
+  gdbus call --session --dest "$p" --object-path /org/mpris/MediaPlayer2 \
+    --method org.mpris.MediaPlayer2.Player Seek "$(printf '%d' "$1")" >/dev/null 2>&1
+}
+mpris_setpos() {
+  local p; p=$(mpris_player); [ -z "$p" ] && return 1
+  gdbus call --session --dest "$p" --object-path /org/mpris/MediaPlayer2 \
+    --method org.mpris.MediaPlayer2.Player SetPosition "/org/mpris/MediaPlayer2" "$(printf '%d' "$1")" >/dev/null 2>&1
+}
+
+# ---- clipboard ------------------------------------------------------------
+clip_masked() {
+  # returns "true" if text looks sensitive
+  local t="$1"
+  if printf '%s' "$t" | grep -qiE 'password|contraseña|secret|token|api[_-]?key'; then echo true; return; fi
+  # card-like number (13-19 digits, optional spaces)
+  local digits; digits=$(printf '%s' "$t" | tr -d '[:space:]' | tr -cd '0-9')
+  if [ "${#digits}" -ge 13 ] && [ "${#digits}" -le 19 ]; then echo true; return; fi
+  echo false
+}
+clip_list() {
+  local raw; raw=$(read_file_safe "$CLIP")
+  [ -z "$raw" ] && { echo '[]'; return; }
+  printf '%s' "$raw" | jq -c . 2>/dev/null || echo '[]'
+}
+clip_add() {
+  local txt="$1"; [ -z "$txt" ] && txt=$(wl-paste --no-newline 2>/dev/null || true)
+  [ -z "$txt" ] && return 0
+  local masked; masked=$(clip_masked "$txt")
+  local cur; cur=$(clip_list)
+  local tmp; tmp=$(mktemp -p "$STATE_DIR")
+  printf '%s' "$cur" | jq --arg t "$txt" --argjson m "$masked" \
+    '[ {ts: (now), txt:$t, sensitive:$m} ] + . | unique_by(.txt) | .[0:60]' > "$tmp" 2>/dev/null \
+    && mv -f "$tmp" "$CLIP" || rm -f "$tmp"
+}
+clip_copy() {
+  local idx="$1"; local cur; cur=$(clip_list)
+  local txt; txt=$(printf '%s' "$cur" | jq -r --argjson i "$idx" '.[$i].txt // empty')
+  [ -n "$txt" ] && printf '%s' "$txt" | wl-copy 2>/dev/null
+}
+
+# ---- tasks ----------------------------------------------------------------
+tskid() { printf '%s' "$(date +%s)$(printf '%04d' $((RANDOM%10000)))"; }
+tasks_get() {
+  local raw; raw=$(read_file_safe "$TASKS")
+  [ -z "$raw" ] && { echo '[]'; return; }
+  printf '%s' "$raw" | jq -c . 2>/dev/null || echo '[]'
+}
+tasks_add() {
+  local cur; cur=$(tasks_get)
+  local tmp; tmp=$(mktemp -p "$STATE_DIR")
+  printf '%s' "$cur" | jq --arg id "$(tskid)" --arg t "$1" '. + [{id:$id, done:false, text:$t}]' > "$tmp" 2>/dev/null \
+    && mv -f "$tmp" "$TASKS" || rm -f "$tmp"
+}
+tasks_set() {
+  local idx="$1" done="$2"; local cur; cur=$(tasks_get)
+  local tmp; tmp=$(mktemp -p "$STATE_DIR")
+  printf '%s' "$cur" | jq --argjson i "$idx" --argjson d "$done" 'if .[$i] then .[$i].done=$d else . end' > "$tmp" 2>/dev/null \
+    && mv -f "$tmp" "$TASKS" || rm -f "$tmp"
+}
+tasks_del() {
+  local idx="$1"; local cur; cur=$(tasks_get)
+  local tmp; tmp=$(mktemp -p "$STATE_DIR")
+  printf '%s' "$cur" | jq --argjson i "$idx" 'del(.[$i])' > "$tmp" 2>/dev/null \
+    && mv -f "$tmp" "$TASKS" || rm -f "$tmp"
+}
+
+# ---- shelf ----------------------------------------------------------------
+shelf_list() {
+  [ -d "$SHELF_DIR" ] || { echo '[]'; return; }
+  local out="[]"
+  for f in "$SHELF_DIR"/*; do
+    [ -e "$f" ] || continue
+    local name mtime size kind
+    name=$(basename "$f")
+    mtime=$(stat -c %Y "$f" 2>/dev/null || echo 0)
+    size=$(stat -c %s "$f" 2>/dev/null || echo 0)
+    case "$name" in
+      *.png|*.jpg|*.jpeg|*.webp|*.gif) kind="image" ;;
+      *.txt|*.md|*.pdf) kind="doc" ;;
+      *.mp4|*.mov|*.webm) kind="video" ;;
+      *) kind="file" ;;
+    esac
+    out=$(printf '%s' "$out" | jq --arg n "$name" --argjson m "$mtime" --argjson s "$size" --arg k "$kind" \
+      '. + [{name:$n, mtime:$m, size:$s, kind:$k}]')
+  done
+  printf '%s' "$out"
+}
+shelf_add() {
+  local src="$1"; [ -e "$src" ] || return 1
+  local dest="$SHELF_DIR/$(basename "$src")"
+  local i=1
+  while [ -e "$dest" ]; do dest="$SHELF_DIR/$(basename "$src").$i"; i=$((i+1)); done
+  cp -f "$src" "$dest" 2>/dev/null
+}
+shelf_rm() { rm -f "$SHELF_DIR/$1" 2>/dev/null; }
+shelf_open() { xdg-open "$SHELF_DIR/$1" >/dev/null 2>&1 || true; }
+
+# ---- calendar (best-effort) ----------------------------------------------
+calendar_next() {
+  local ev=""
+  if command -v khal >/dev/null 2>&1; then
+    ev=$(khal list --now 2>/dev/null | head -n3)
+  elif command -v gcalcli >/dev/null 2>&1; then
+    ev=$(gcalcli agenda 2>/dev/null | head -n3)
+  fi
+  if [ -z "$ev" ]; then echo '{"has":false}'; return; fi
+  local title time
+  title=$(printf '%s' "$ev" | head -n1 | sed 's/^[0-9:[:space:]*+-]*//')
+  time=$(printf '%s' "$ev" | head -n1 | grep -oE '[0-9]{1,2}:[0-9]{2}' | head -n1)
+  jq -nc --arg title "$title" --arg time "$time" '{has:true, title:$title, time:$time, join:""}'
+}
+
+# ---- keybind self-install -------------------------------------------------
+KEYBIND="SUPER + SHIFT + N"
+ensure_keybind() {
+  local hypr_dir="$HOME/.config/hypr"
+  local lua="$hypr_dir/supernotch-bindings.lua"
+  local main="$hypr_dir/hyprland.lua"
+  [ -d "$hypr_dir" ] || return 0
+  local tmp; tmp=$(mktemp -p "$hypr_dir") || return 0
+  cat > "$tmp" <<EOF
+-- Auto-generated by omarchy-supernotch. Binds $KEYBIND to the notch toggle.
+hl.unbind("$KEYBIND")
+o.bind("$KEYBIND", "SuperNotch", "$PLUGIN_DIR/bin/omarchy-supernotch toggle")
+EOF
+  if cmp -s "$tmp" "$lua" 2>/dev/null; then rm -f "$tmp"; else mv -f "$tmp" "$lua"; fi
+  [ -f "$main" ] || return 0
+  local cur; cur=$(read_file_safe "$main")
+  [ -n "$cur" ] || return 0
+  printf '%s' "$cur" | grep -qs 'require("supernotch-bindings")' && return 0
+  local tmp2; tmp2=$(mktemp -p "$hypr_dir") || return 0
+  { printf '%s\n' "$cur"; printf '\nrequire("supernotch-bindings")\n'; } > "$tmp2" \
+    && mv -f "$tmp2" "$main"
+}
+remove_keybind() {
+  local hypr_dir="$HOME/.config/hypr"
+  local lua="$hypr_dir/supernotch-bindings.lua"
+  local main="$hypr_dir/hyprland.lua"
+  if [ -f "$main" ]; then
+    local cur; cur=$(read_file_safe "$main")
+    if [ -n "$cur" ] && printf '%s' "$cur" | grep -qs 'require("supernotch-bindings")'; then
+      local tmp; tmp=$(mktemp -p "$hypr_dir") || return 0
+      printf '%s' "$cur" | grep -v 'require("supernotch-bindings")' > "$tmp" \
+        && mv -f "$tmp" "$main"
+    fi
+  fi
+  rm -f "$lua"
+}
+bind_status() { [ -f "$HOME/.config/hypr/supernotch-bindings.lua" ] && echo enabled || echo disabled; }
+bind_toggle() { if [ -f "$HOME/.config/hypr/supernotch-bindings.lua" ]; then remove_keybind; else ensure_keybind; fi; }
+
+# ---- main dispatch --------------------------------------------------------
+case "${1:-}" in
+  mpris)            mpris_status ;;
+  mpris-toggle)     mpris_send PlayPause ;;
+  mpris-play)       mpris_send Play ;;
+  mpris-pause)      mpris_send Pause ;;
+  mpris-next)       mpris_send Next ;;
+  mpris-prev)       mpris_send Previous ;;
+  mpris-seek+)      mpris_seek 10000000 ;;
+  mpris-seek-)      mpris_seek -10000000 ;;
+  mpris-setpos)     mpris_setpos "$2" ;;
+  mpris-set)        mpris_setpos "$2" ;;
+  clip-list)        clip_list ;;
+  clip-add)         clip_add "$2" ;;
+  clip-copy)        clip_copy "$2" ;;
+  tasks-get)        tasks_get ;;
+  tasks-add)        shift; tasks_add "$*" ;;
+  tasks-toggle)     tasks_set "$2" true ;;
+  tasks-untoggle)   tasks_set "$2" false ;;
+  tasks-del)        tasks_del "$2" ;;
+  shelf-list)       shelf_list ;;
+  shelf-add)        shelf_add "$2" ;;
+  shelf-rm)         shelf_rm "$2" ;;
+  shelf-open)       shelf_open "$2" ;;
+  calendar-next)    calendar_next ;;
+  get-prefs)        read_prefs ;;
+  set-pref)         write_pref "$2" "$3" ;;
+  notch-detect)     notch_detect ;;
+  plugins-list)     list_plugins ;;
+  weather-status)  omarchy-weather-status ;;
+  weather-icon)    omarchy-weather-icon ;;
+  weather-location) omarchy-weather-location ;;
+  set-enabled)      write_pref "notchPlugins" "$2" ;;
+  set-notch)       write_pref "notchPlugins" "$2" ;;
+  set-order)       write_pref "pluginOrder" "$2" ;;
+  install-bind)     ensure_keybind ;;
+  uninstall-bind)   remove_keybind ;;
+  bind-toggle)      bind_toggle ;;
+  bind-status)      bind_status ;;
+  toggle)           if [ "$(panel_state)" = "open" ]; then panel_close; else panel_open; fi; echo ok ;;
+  *)                echo "unknown command: $1" >&2; exit 1 ;;
+esac

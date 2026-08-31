@@ -1,0 +1,15 @@
+{
+  "key": "clipboard",
+  "icon": "📋",
+  "barIcon": "󰆐",
+  "label": {
+    "en": "Clipboard",
+    "es": "Portapapeles"
+  },
+  "ui": "clipboard.qml",
+  "refresh": [
+    "clipboard"
+  ],
+  "order": 2,
+  "preferredHeight": 340
+}

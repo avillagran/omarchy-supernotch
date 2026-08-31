@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.avillagran.omarchy-supernotch",
+  "name": "SuperNotch",
+  "version": "1.0.0",
+  "author": "Andrés Villagrán <andres@villagranquiroz.cl>",
+  "license": "MIT",
+  "description": "Anclave-style animated notch for Omarchy/Hyprland: a tiny center pill that blooms into a dark, rounded, heavily-animated command center — music (MPRIS), tasks, clipboard, pomodoro, shelf, calendar and activity. No account, no server, all local.",
+  "kinds": [
+    "bar-widget",
+    "service"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "barWidget": "BarWidget.qml",
+    "service": "Service.qml"
+  },
+  "barWidget": {
+    "displayName": "SuperNotch",
+    "description": "Animated notch command center (click the center pill or SUPER+SHIFT+N).",
+    "category": "Widgets",
+    "defaultSection": "center",
+    "allowMultiple": false
+  }
+}
