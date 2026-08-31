@@ -289,9 +289,9 @@ Panel {
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
-      onCloseRequested: { console.warn("[keys] Esc"); root.close() }
-      onTabRequested: function (d) { console.warn("[keys] Tab d=" + d); var n = Math.max(1, root.plugins.length); root.setModule((root.current + d + n) % n) }
-      onTextKey: function (t) { console.warn("[keys] textKey=" + t)
+      onCloseRequested: root.close()
+      onTabRequested: function (d) { var n = Math.max(1, root.plugins.length); root.setModule((root.current + d + n) % n) }
+      onTextKey: function (t) {
         // digit 1-9 jumps straight to that tab
         if (t >= "1" && t <= "9") {
           var idx = parseInt(t, 10) - 1
