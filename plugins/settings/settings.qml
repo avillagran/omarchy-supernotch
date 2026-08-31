@@ -181,7 +181,7 @@ Item {
       }
       ThemedSlider {
         id: insetSlider
-        from: 0; to: 90
+        from: 0; to: 80
         value: root ? root.notchInsetPct : 0
         onPressedChanged: if (root) { root.notchInsetEditing = pressed; root.pushBar() }
         onApply: function (v) {
@@ -292,6 +292,16 @@ Item {
     }
 
     // ── toggles ──
+    ToggleRow {
+      label: root ? root.t(root.uiLang, "darkCenter") : "Dark notch center"
+      checked: root ? root.darkCenter : false
+      onToggle: function (v) {
+        if (!root) return
+        root.darkCenter = v
+        cfg.save("notchDarkCenter", v)
+        root.pushBar()
+      }
+    }
     ToggleRow {
       label: root ? root.t(root.uiLang, "autoHide") : "Auto-hide"
       checked: root ? root.autoHide : true

@@ -54,7 +54,8 @@
     "bgBlur": "Inner background blur",
     "bgOpacity": "Transparency",
     "showInNotch": "Show in notch",
-    "notchInset": "Notch interior"
+    "notchInset": "Notch interior",
+    "darkCenter": "Dark notch center"
   },
   "es": {
     "notchTooltip": "SuperNotch — centro de control",
@@ -111,7 +112,8 @@
     "bgBlur": "Difuminado al fondo interno",
     "bgOpacity": "Transparencia",
     "showInNotch": "Mostrar en el notch",
-    "notchInset": "Interior del notch"
+    "notchInset": "Interior del notch",
+    "darkCenter": "Centro del notch oscuro"
   },
   "pt": {
     "notchTooltip": "SuperNotch — centro de comando",

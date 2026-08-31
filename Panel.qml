@@ -83,6 +83,7 @@ Panel {
   property real notchInsetPct: 0   // % of notch width
   property int notchInset: Math.round(notchWidth * notchInsetPct / 100)
   property bool notchInsetEditing: false
+  property bool darkCenter: false   // paint the center gap dark so the notch hollow is visible
   property var pluginOrder: []
   property var notchPlugins: []
   function loadPrefs() {
@@ -114,6 +115,7 @@ Panel {
           root.notchInsetPct = Math.max(0, Math.min(90, ni))
           run(["set-pref", "notchInset", String(root.notchInsetPct)])  // persist as pct
         }
+        if (typeof p.notchDarkCenter === "boolean") root.darkCenter = p.notchDarkCenter
         if (Array.isArray(p.pluginOrder)) root.pluginOrder = p.pluginOrder
         if (Array.isArray(p.notchPlugins)) root.notchPlugins = p.notchPlugins
         root.recomputeNotch()
@@ -125,8 +127,7 @@ Panel {
       // a 20% floor; elsewhere 5% is fine.
       if ((out || "").trim() === "1") root.minNotchPct = 20
       else root.minNotchPct = 5
-      // re-clamp the loaded width against the floor
-      root.notchWidth = Math.max(160, Math.min(90, Math.max(root.notchWidthPct, root.minNotchPct)) / 100 * root.monitorW)
+      // re-clamp the loaded width against the floor (binding in notchWidth does this)
       root.pushBar()
     })
     run(["notch-detect"], function (out) {
@@ -146,6 +147,7 @@ Panel {
   function updateNotchData(key, ic, tx) {
     var d = root.notchData; d[key] = { icon: ic, text: tx }; root.notchData = d
     root.recomputeNotch()
+    root.pushBar()  // propagate live so the pill re-layouts in real time
   }
   function recomputeNotch() {
     var all = root.plugins
@@ -262,6 +264,7 @@ Panel {
     w.barPlugins = root.notchList
     w.notchInset = root.notchInset
     w.notchWidth = root.notchWidth
+    w.darkCenter = root.darkCenter
     w.notchInsetEditing = root.notchInsetEditing
     if (root.opened) {
       var mod = root.plugins[root.current]

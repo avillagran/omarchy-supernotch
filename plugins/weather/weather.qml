@@ -46,6 +46,15 @@ Item {
     if (windKmh >= 25) return "wind"
     return "sun"
   }
+  // Emoji fallback for places where a Nerd Font glyph may not render.
+  function emojiForCode(code, night) {
+    var c = parseInt(String(code || "0"), 10)
+    if (c >= 200 && c <= 395) return "⛈"
+    if (c >= 176 && c <= 377) return (c >= 179 && c <= 371) ? "❄" : "🌧"
+    if (c === 119 || c === 122 || c === 248 || c === 260) return "☁"
+    if (c >= 266 && c <= 359) return "🌧"
+    return night ? "🌙" : "☀"
+  }
 
   function load() {
     if (!root) return
@@ -77,8 +86,8 @@ Item {
         m.cond = cur.weatherDesc ? cur.weatherDesc[0].value : ""
         m.humidity = cur.humidity || ""
         m.wind = cur.windspeedKmph || ""
-        m.icon = m.glyphForCode(m.code, isNight)
         m.kind = m.kindForCode(m.code, parseFloat(m.wind) || 0)
+        m.icon = m.emojiForCode(m.code, isNight)
         var today = d.weather && d.weather[0]
         if (today) { m.maxC = today.maxtempC; m.minC = today.mintempC }
         // next 3 days forecast (nearest noon entry)
@@ -88,7 +97,7 @@ Item {
           var hr = day.hourly && day.hourly.length > 12 ? day.hourly[11] : (day.hourly && day.hourly[0])
           fc.push({
             day: day.date,
-            icon: m.glyphForCode(hr ? hr.weatherCode : day.hourly[0].weatherCode, false),
+            icon: m.emojiForCode(hr ? hr.weatherCode : day.hourly[0].weatherCode, false),
             maxC: day.maxtempC, minC: day.mintempC
           })
         }
@@ -138,7 +147,7 @@ Item {
       id: wIcon
       text: m.icon || ""
       font.pixelSize: Style.font.displayLarge
-      font.family: "Symbols Nerd Font"
+      font.family: "monospace"
       color: Color.foreground
       anchors.verticalCenter: parent.verticalCenter
     }

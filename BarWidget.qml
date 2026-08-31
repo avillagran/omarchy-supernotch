@@ -36,6 +36,7 @@ BarWidget {
   // is not directly readable here, so the Panel writes them onto this widget).
   property int notchWidth: 0
   property int notchInset: 0
+  property bool darkCenter: false
   onBarIconChanged: { barPulse = 0; Qt.callLater(function () { barPulse = 1 }) }
   onBarInfoChanged: { barPulse = 0; Qt.callLater(function () { barPulse = 1 }) }
   Behavior on barPulse { NumberAnimation { duration: 300; easing.type: Easing.OutCubic } }
@@ -147,6 +148,16 @@ BarWidget {
     readonly property real gapHalf: notchInset / 2
     Component.onCompleted: { if (root && root.pushBar) root.pushBar() }
 
+    // Optional dark center so the notch hollow is graphically visible.
+    Rectangle {
+      anchors.horizontalCenter: parent.horizontalCenter
+      width: root.notchInset
+      height: parent.height
+      color: Color.background
+      visible: root.darkCenter
+      z: 1
+    }
+
     // left side: hugs the center gap from the left
     Row {
       id: leftRow
@@ -163,7 +174,7 @@ BarWidget {
           height: childrenRect.height
           Row {
             spacing: Style.space(6)
-            Text { text: (modelData.icon || "◇"); color: Color.accent; font.pixelSize: Style.font.body; anchors.verticalCenter: parent.verticalCenter }
+            Text { text: (modelData.icon || "◇"); color: Color.foreground; font.family: "monospace"; font.pixelSize: Style.font.body; anchors.verticalCenter: parent.verticalCenter }
             Text { text: (modelData.text || modelData.key); color: Color.foreground; font.pixelSize: Style.font.bodySmall; anchors.verticalCenter: parent.verticalCenter }
           }
           MouseArea { anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.openPlugin(modelData.key) }
@@ -185,7 +196,7 @@ BarWidget {
           height: childrenRect.height
           Row {
             spacing: Style.space(6)
-            Text { text: (modelData.icon || "◇"); color: Color.accent; font.pixelSize: Style.font.body; anchors.verticalCenter: parent.verticalCenter }
+            Text { text: (modelData.icon || "◇"); color: Color.foreground; font.family: "monospace"; font.pixelSize: Style.font.body; anchors.verticalCenter: parent.verticalCenter }
             Text { text: (modelData.text || modelData.key); color: Color.foreground; font.pixelSize: Style.font.bodySmall; anchors.verticalCenter: parent.verticalCenter }
           }
           MouseArea { anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.openPlugin(modelData.key) }
@@ -210,7 +221,7 @@ BarWidget {
           height: childrenRect.height
           Row {
             spacing: Style.space(6)
-            Text { text: (modelData.icon || "◇"); color: Color.accent; font.pixelSize: Style.font.body; anchors.verticalCenter: parent.verticalCenter }
+            Text { text: (modelData.icon || "◇"); color: Color.foreground; font.family: "monospace"; font.pixelSize: Style.font.body; anchors.verticalCenter: parent.verticalCenter }
             Text { text: (modelData.text || modelData.key); color: Color.foreground; font.pixelSize: Style.font.bodySmall; anchors.verticalCenter: parent.verticalCenter }
           }
           MouseArea { anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.openPlugin(modelData.key) }
@@ -233,7 +244,8 @@ BarWidget {
         Item {
           Text {
             text: (modelData.icon || "◇")
-            color: Color.accent
+            color: Color.foreground
+            font.family: "monospace"
             font.pixelSize: Style.font.body
             anchors.horizontalCenter: parent.horizontalCenter
           }
