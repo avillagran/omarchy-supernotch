@@ -102,7 +102,7 @@ list_plugins() {
   jq -sc 'sort_by(.order // 99)' "$tmp" 2>/dev/null || echo '[]'
   rm -f "$tmp"
 }
-default_prefs() { echo '{"notchWidth":42,"panelWidth":70,"notchHeight":420,"notchBarWidth":0,"autoHide":true,"clipMask":true,"realNotch":false,"bg":"aurora","bgBlur":0,"bgOpacity":1.0,"notchInset":0,"notchPlugins":[],"pluginOrder":[]}'; }
+default_prefs() { echo '{"notchWidth":20,"panelWidth":70,"notchHeight":420,"notchBarWidth":0,"autoHide":true,"clipMask":true,"realNotch":false,"bg":"aurora","bgBlur":0,"bgOpacity":1.0,"notchInset":0,"notchPlugins":[],"pluginOrder":[]}'; }
 read_prefs() {
   local raw; raw=$(read_file_safe "$PREFS")
   if [ -n "$raw" ]; then printf '%s' "$raw" | jq -c . 2>/dev/null || default_prefs
@@ -360,6 +360,13 @@ case "${1:-}" in
   weather-fetch)   # $2 = wttr.in query (lat,lon or "City,Country"); prints j1 JSON
     q="${2:-Santiago,Chile}"
     curl -fsS --max-time 12 "https://wttr.in/${q}?format=j1" 2>/dev/null || echo '{}' ;;
+  is-macbook)      # prints 1 if running on Apple hardware (notch detected as useful),
+                   # else 0. Sources: DMI sys_vendor/product_name (x86) and
+                   # devicetree model (Apple Silicon).
+    if [ -r /sys/class/dmi/id/sys_vendor ] && grep -qi apple /sys/class/dmi/id/sys_vendor 2>/dev/null; then echo 1; exit 0; fi
+    if [ -r /sys/class/dmi/id/product_name ] && grep -qi '^Mac' /sys/class/dmi/id/product_name 2>/dev/null; then echo 1; exit 0; fi
+    if [ -r /sys/firmware/devicetree/base/model ] && grep -qi 'Apple' /sys/firmware/devicetree/base/model 2>/dev/null; then echo 1; exit 0; fi
+    echo 0 ;;
   set-enabled)      write_pref "notchPlugins" "$2" ;;
   set-notch)       write_pref "notchPlugins" "$2" ;;
   set-order)       write_pref "pluginOrder" "$2" ;;
