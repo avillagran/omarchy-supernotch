@@ -8,18 +8,21 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 PLUGIN_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 PLUGINS_DIR="$PLUGIN_DIR/plugins"
-RUNDIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
-STATE_DIR="$RUNDIR/omarchy-supernotch"
-mkdir -p "$STATE_DIR"
+# Persist user settings across reboots in ~/.local/state; runtime-only files
+# (sockets, temporary IPC) can live under $XDG_RUNTIME_DIR when needed.
+PERSIST_DIR="${HOME}/.local/state/omarchy-supernotch"
+mkdir -p "$PERSIST_DIR"
+STATE_DIR="$PERSIST_DIR"
 TASKS="$STATE_DIR/tasks.json"
 CLIP="$STATE_DIR/clip.json"
 SHELF_DIR="$STATE_DIR/shelf"
 PREFS="$STATE_DIR/prefs.json"
 mkdir -p "$SHELF_DIR"
 
+RUNDIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-1}"
 export HYPRLAND_INSTANCE_SIGNATURE="${HYPRLAND_INSTANCE_SIGNATURE:-$(ls -1 "$RUNDIR"/hypr/ 2>/dev/null | grep -E '^[0-9a-f]{8}' | head -1)}"
 export XDG_RUNTIME_DIR="$RUNDIR"
-export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-1}"
 
 # ---- safe reads (G12 hardened) ---------------------------------------------
 MAX_READ=262144
