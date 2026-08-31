@@ -233,6 +233,9 @@ Panel {
     if (i === root.current) { if (!root.opened) root.open(); return }
     root.contentOpacity = 0; root._pending = i; switchTimer.restart()
   }
+  function openPlugin(key) {
+    for (var i = 0; i < root.plugins.length; i++) if (root.plugins[i].key === key) { root.open(); root.setModule(i); return }
+  }
 
   // ---- cursor tracking (aurora parallax) --------------------------------
   property real cursorNX: 0   // -1..1 from card center
@@ -273,6 +276,13 @@ Panel {
       anchors.fill: parent
       onCloseRequested: root.close()
       onTabRequested: function (d) { var n = Math.max(1, root.plugins.length); root.setModule((root.current + d + n) % n) }
+      onTextKey: function (t) {
+        // digit 1-9 jumps straight to that tab
+        if (t >= "1" && t <= "9") {
+          var idx = parseInt(t, 10) - 1
+          if (idx < root.plugins.length) root.openPlugin(root.plugins[idx].key)
+        }
+      }
     }
 
     // ══ CARD WRAP — shadow + surface scale/fade TOGETHER (no ghost rect) ══

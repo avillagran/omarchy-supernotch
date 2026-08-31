@@ -159,10 +159,14 @@ BarWidget {
       opacity: (!root.bar.vertical && pill.showAll) ? 1 : 0
       Repeater {
         model: pill.leftHalf()
-        Row {
-          spacing: Style.space(6)
-          Text { text: (modelData.icon || "◇"); color: Color.accent; font.pixelSize: Style.font.body; anchors.verticalCenter: parent.verticalCenter }
-          Text { text: (modelData.text || modelData.key); color: Color.foreground; font.pixelSize: Style.font.bodySmall; anchors.verticalCenter: parent.verticalCenter }
+        Item {
+          height: childrenRect.height
+          Row {
+            spacing: Style.space(6)
+            Text { text: (modelData.icon || "◇"); color: Color.accent; font.pixelSize: Style.font.body; anchors.verticalCenter: parent.verticalCenter }
+            Text { text: (modelData.text || modelData.key); color: Color.foreground; font.pixelSize: Style.font.bodySmall; anchors.verticalCenter: parent.verticalCenter }
+          }
+          MouseArea { anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.openPlugin(modelData.key) }
         }
       }
     }
@@ -177,10 +181,14 @@ BarWidget {
       opacity: (!root.bar.vertical && pill.showAll) ? 1 : 0
       Repeater {
         model: pill.rightHalf()
-        Row {
-          spacing: Style.space(6)
-          Text { text: (modelData.icon || "◇"); color: Color.accent; font.pixelSize: Style.font.body; anchors.verticalCenter: parent.verticalCenter }
-          Text { text: (modelData.text || modelData.key); color: Color.foreground; font.pixelSize: Style.font.bodySmall; anchors.verticalCenter: parent.verticalCenter }
+        Item {
+          height: childrenRect.height
+          Row {
+            spacing: Style.space(6)
+            Text { text: (modelData.icon || "◇"); color: Color.accent; font.pixelSize: Style.font.body; anchors.verticalCenter: parent.verticalCenter }
+            Text { text: (modelData.text || modelData.key); color: Color.foreground; font.pixelSize: Style.font.bodySmall; anchors.verticalCenter: parent.verticalCenter }
+          }
+          MouseArea { anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.openPlugin(modelData.key) }
         }
       }
     }
@@ -198,10 +206,14 @@ BarWidget {
       opacity: (!root.bar.vertical && !pill.showAll) ? 1 : 0
       Repeater {
         model: pill.enabledList.length ? [pill.enabledList[pill.tickIdx]] : []
-        Row {
-          spacing: Style.space(6)
-          Text { text: (modelData.icon || "◇"); color: Color.accent; font.pixelSize: Style.font.body; anchors.verticalCenter: parent.verticalCenter }
-          Text { text: (modelData.text || modelData.key); color: Color.foreground; font.pixelSize: Style.font.bodySmall; anchors.verticalCenter: parent.verticalCenter }
+        Item {
+          height: childrenRect.height
+          Row {
+            spacing: Style.space(6)
+            Text { text: (modelData.icon || "◇"); color: Color.accent; font.pixelSize: Style.font.body; anchors.verticalCenter: parent.verticalCenter }
+            Text { text: (modelData.text || modelData.key); color: Color.foreground; font.pixelSize: Style.font.bodySmall; anchors.verticalCenter: parent.verticalCenter }
+          }
+          MouseArea { anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.openPlugin(modelData.key) }
         }
       }
     }
@@ -218,11 +230,14 @@ BarWidget {
         model: root.bar.vertical
           ? (pill.showAll ? pill.enabledList : (pill.enabledList.length ? [pill.enabledList[pill.tickIdx]] : []))
           : []
-        Text {
-          text: (modelData.icon || "◇")
-          color: Color.accent
-          font.pixelSize: Style.font.body
-          anchors.horizontalCenter: parent.horizontalCenter
+        Item {
+          Text {
+            text: (modelData.icon || "◇")
+            color: Color.accent
+            font.pixelSize: Style.font.body
+            anchors.horizontalCenter: parent.horizontalCenter
+          }
+          MouseArea { anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.openPlugin(modelData.key) }
         }
       }
     }
