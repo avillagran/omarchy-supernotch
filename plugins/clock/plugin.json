@@ -1,8 +1,11 @@
 {
   "key": "clock",
   "icon": "🕐",
-  "barIcon": "◴",
-  "label": { "en": "Clock", "es": "Reloj" },
+  "barIcon": "🕐",
+  "label": {
+    "en": "Clock",
+    "es": "Reloj"
+  },
   "ui": "clock.qml",
   "refresh": [],
   "order": 5,
