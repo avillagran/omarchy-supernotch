@@ -218,6 +218,7 @@ Panel {
     root.enterT = root.opened ? 1 : 0
     root.pushBar()
     if (root.opened) {
+      root.focusSection = "tabs"
       root.cardH = root.fullH
       loadPrefs(); loadPlugins(); refreshAll()
     }
@@ -241,6 +242,7 @@ Panel {
   Behavior on cardH { SpringAnimation { spring: 2.6; damping: 0.24; mass: 0.9 } }
 
   property int current: 0
+  property string focusSection: "tabs" // "tabs" | "content" — keyboard focus
   property real contentOpacity: 1
   Behavior on contentOpacity { NumberAnimation { duration: 150 } }
   property int _pending: 0
@@ -283,7 +285,7 @@ Panel {
     owner: root.hostWidget || root
     bar: (root.anchorItem ? root.anchorItem.bar : root.bar)
     open: root.opened
-    centerOnBar: true
+    centerOnBar: false
     focusTarget: keyCatcher
     contentWidth: root.cardW
     contentHeight: root.cardH
@@ -292,12 +294,24 @@ Panel {
       id: keyCatcher
       anchors.fill: parent
       onCloseRequested: root.close()
-      onTabRequested: function (d) { var n = Math.max(1, root.plugins.length); root.setModule((root.current + d + n) % n) }
+      onTabRequested: function (d) { var n = Math.max(1, root.plugins.length); root.setModule((root.current + d + n) % n); root.focusSection = "tabs" }
+      onMoveRequested: function (dx, dy) {
+        if (root.focusSection === "tabs") {
+          if (dx !== 0) { var n2 = Math.max(1, root.plugins.length); root.setModule((root.current + (dx > 0 ? 1 : -1) + n2) % n2) }
+          else if (dy > 0) { root.focusSection = "content" }
+        } else {
+          if (dy < 0) { root.focusSection = "tabs" }
+          // horizontal moves inside content could be forwarded to plugins later
+        }
+      }
+      onActivateRequested: {
+        if (root.focusSection === "tabs") root.focusSection = "content"
+      }
       onTextKey: function (t) {
         // digit 1-9 jumps straight to that tab
         if (t >= "1" && t <= "9") {
           var idx = parseInt(t, 10) - 1
-          if (idx < root.plugins.length) root.openPlugin(root.plugins[idx].key)
+          if (idx < root.plugins.length) { root.openPlugin(root.plugins[idx].key); root.focusSection = "tabs" }
         }
       }
     }
@@ -495,7 +509,7 @@ Panel {
                     Behavior on width { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
                   }
                 }
-                MouseArea { id: tabMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.setModule(index) }
+                MouseArea { id: tabMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: { root.focusSection = "tabs"; root.setModule(index) } }
               }
             }
           }
@@ -535,6 +549,17 @@ Panel {
           opacity: root.contentOpacity * root.enterT
           transform: Translate { y: (1 - root.contentOpacity) * 8 }
           clip: true
+          // focus ring when keyboard focus is in content (Down from tabs)
+          Rectangle {
+            anchors.fill: parent
+            anchors.margins: Style.space(4)
+            radius: Style.cornerRadius
+            color: "transparent"
+            border.color: Color.accent
+            border.width: root.focusSection === "content" ? 1 : 0
+            opacity: root.focusSection === "content" ? 0.6 : 0
+            Behavior on opacity { NumberAnimation { duration: 150 } }
+          }
           Repeater {
             model: root.plugins
             Loader {

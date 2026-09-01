@@ -1,7 +1,7 @@
 {
   "key": "clock",
-  "icon": "🕐",
-  "barIcon": "🕐",
+  "icon": "󰥔",
+  "barIcon": "󰥔",
   "label": {
     "en": "Clock",
     "es": "Reloj"
