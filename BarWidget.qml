@@ -135,20 +135,15 @@ BarWidget {
     readonly property var enabledList: root.barPlugins
     property int tickIdx: 0
     property bool editing: root.notchInsetEditing
-    // Pill fill brightens while the user drags "Notch interior" (editing feedback).
     color: editing
       ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.42)
       : Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.16)
     Behavior on color { ColorAnimation { duration: 160 } }
-    // Show side-by-side (split around the center gap) when the AVAILABLE space
-    // fits all plugins: available = pill width − notchInset (the hollow center).
-    // Otherwise tick one at a time. Use a compact per-item budget so the default
-    // 20% width on a 3456px monitor shows all 4 plugins side-by-side.
     readonly property real usableW: Math.max(0, pill.width - notchInset)
     readonly property bool showAll: pill.enabledList.length > 0 && pill.usableW >= Math.max(1, pill.enabledList.length) * 90
-    // Reactive halves — Repeater root id is flaky with function calls, use properties
-    readonly property var leftList: { var l = pill.enabledList, c = Math.ceil(l.length / 2); return l.slice(0, c) }
-    readonly property var rightList: { var l = pill.enabledList, c = Math.ceil(l.length / 2); return l.slice(c) }
+    // Split by user-chosen side (default right); left-aligned vs right-aligned.
+    readonly property var leftList: { var l = pill.enabledList; return l.filter(function (x){ return (x.side || "right") === "left" }) }
+    readonly property var rightList: { var l = pill.enabledList; return l.filter(function (x){ return (x.side || "right") !== "left" }) }
     Timer {
       interval: 3000; repeat: true
       running: pill.enabledList.length > 1 && !pill.showAll

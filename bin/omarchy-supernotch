@@ -105,7 +105,7 @@ list_plugins() {
   jq -sc 'sort_by(.order // 99)' "$tmp" 2>/dev/null || echo '[]'
   rm -f "$tmp"
 }
-default_prefs() { echo '{"notchWidth":20,"panelWidth":70,"notchHeight":420,"notchBarWidth":0,"autoHide":true,"clipMask":true,"realNotch":false,"bg":"aurora","bgBlur":0,"bgOpacity":1.0,"notchInset":0,"notchPlugins":[],"pluginOrder":[]}'; }
+default_prefs() { echo '{"notchWidth":20,"panelWidth":70,"notchHeight":420,"notchBarWidth":0,"autoHide":true,"clipMask":true,"realNotch":false,"bg":"aurora","bgBlur":0,"bgOpacity":1.0,"notchInset":0,"notchPlugins":[],"pluginOrder":[],"notchSides":{}}'; }
 read_prefs() {
   local raw; raw=$(read_file_safe "$PREFS")
   if [ -n "$raw" ]; then printf '%s' "$raw" | jq -c . 2>/dev/null || default_prefs
@@ -373,6 +373,13 @@ case "${1:-}" in
   set-enabled)      write_pref "notchPlugins" "$2" ;;
   set-notch)       write_pref "notchPlugins" "$2" ;;
   set-order)       write_pref "pluginOrder" "$2" ;;
+  set-side)        # $2=key $3=left|right
+    cur=$(read_prefs)
+    tmp=$(mktemp -p "$STATE_DIR")
+    printf '%s' "$cur" | jq --arg k "$2" --arg s "$3" '.notchSides //= {} | .notchSides[$k] = $s' > "$tmp" 2>/dev/null && mv -f "$tmp" "$PREFS" || rm -f "$tmp" ;;
+  get-side)        # $2=key ; prints "left" or "right" (default right)
+    cur=$(read_prefs)
+    printf '%s' "$cur" | jq -r --arg k "$2" '(.notchSides[$k]) // "right"' ;;
   install-bind)     ensure_keybind ;;
   uninstall-bind)   remove_keybind ;;
   bind-toggle)      bind_toggle ;;

@@ -98,10 +98,47 @@ Item {
     Repeater {
       id: notchRep
       model: []
-      ToggleRow {
-        label: (modelData.label && (modelData.label[root.uiLang] || modelData.label.en)) || modelData.key
-        checked: root ? root.isNotch(modelData.key) : true
-        onToggle: function (v) { if (root) root.toggleNotch(modelData.key) }
+      Column {
+        width: parent.width
+        spacing: Style.space(4)
+        ToggleRow {
+          label: (modelData.label && (modelData.label[root.uiLang] || modelData.label.en)) || modelData.key
+          checked: root ? root.isNotch(modelData.key) : true
+          onToggle: function (v) { if (root) root.toggleNotch(modelData.key) }
+        }
+        // side selector (only when shown in notch)
+        Item {
+          width: parent.width; height: Style.space(26)
+          visible: root ? root.isNotch(modelData.key) : false
+          Text {
+            text: root ? root.t(root.uiLang, "notchSide") + ":" : "Side:"
+            color: Color.muted; font.pixelSize: Style.font.caption
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.left: parent.left; anchors.leftMargin: Style.space(2)
+          }
+          // Left / Right segmented buttons
+          Rectangle {
+            anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
+            width: Style.space(92); height: Style.space(22); radius: Style.space(11)
+            color: Color.popups.background
+            border.color: Color.popups.border; border.width: 1
+            Row {
+              anchors.centerIn: parent; anchors.margins: 1
+              Rectangle {
+                width: Style.space(44); height: Style.space(18); radius: Style.space(9)
+                color: (root && root.sideOf(modelData.key) === "left") ? Color.accent : "transparent"
+                Text { anchors.centerIn: parent; text: root ? root.t(root.uiLang, "sideLeft") : "L"; color: (root && root.sideOf(modelData.key) === "left") ? Color.background : Color.muted; font.pixelSize: Style.font.caption; font.family: Style.fontFamily }
+                MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: if (root) root.setSide(modelData.key, "left") }
+              }
+              Rectangle {
+                width: Style.space(44); height: Style.space(18); radius: Style.space(9)
+                color: (root && root.sideOf(modelData.key) !== "left") ? Color.accent : "transparent"
+                Text { anchors.centerIn: parent; text: root ? root.t(root.uiLang, "sideRight") : "R"; color: (root && root.sideOf(modelData.key) !== "left") ? Color.background : Color.muted; font.pixelSize: Style.font.caption; font.family: Style.fontFamily }
+                MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: if (root) root.setSide(modelData.key, "right") }
+              }
+            }
+          }
+        }
       }
     }
 
