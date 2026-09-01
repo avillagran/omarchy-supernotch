@@ -252,7 +252,10 @@ Panel {
     root.contentOpacity = 0; root._pending = i; switchTimer.restart()
   }
   function openPlugin(key) {
-    for (var i = 0; i < root.plugins.length; i++) if (root.plugins[i].key === key) { root.open(); root.setModule(i); return }
+    for (var i = 0; i < root.plugins.length; i++) if (root.plugins[i].key === key) {
+      if (root.opened && root.current === i) { root.close(); return }
+      root.open(); root.setModule(i); return
+    }
   }
 
   // ---- cursor tracking (aurora parallax) --------------------------------
@@ -286,6 +289,8 @@ Panel {
     bar: (root.anchorItem ? root.anchorItem.bar : root.bar)
     open: root.opened
     centerOnBar: false
+    gap: Style.space(4)
+    margin: Style.space(4)
     focusTarget: keyCatcher
     contentWidth: root.cardW
     contentHeight: root.cardH
@@ -487,6 +492,7 @@ Panel {
                     text: modelData.panelIcon || modelData.icon || "◇"
                     color: root.current === index ? Color.accent : Color.foreground
                     opacity: root.current === index ? 1 : (tabMa.containsMouse ? 1 : 0.78)
+                    font.family: Style.fontFamily
                     font.pixelSize: Style.font.body
                     anchors.verticalCenter: parent.verticalCenter
                     scale: root.current === index ? 1.15 : 1.0
