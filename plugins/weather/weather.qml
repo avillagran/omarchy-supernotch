@@ -173,8 +173,8 @@ Item {
     Column {
       anchors.verticalCenter: parent.verticalCenter
       spacing: Style.space(2)
-      Text { text: m.humidity ? "💧 " + m.humidity + "%" : ""; color: Color.muted; font.pixelSize: Style.font.bodySmall }
-      Text { text: m.wind ? "🌬 " + m.wind + "km/h" : ""; color: Color.muted; font.pixelSize: Style.font.bodySmall }
+      Text { text: m.humidity ? "󰖌 " + m.humidity + "%" : ""; color: Color.muted; font.family: Style.fontFamily; font.pixelSize: Style.font.bodySmall }
+      Text { text: m.wind ? "󰖝 " + m.wind + "km/h" : ""; color: Color.muted; font.family: Style.fontFamily; font.pixelSize: Style.font.bodySmall }
     }
   }
 }

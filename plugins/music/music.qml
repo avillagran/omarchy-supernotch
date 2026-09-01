@@ -45,7 +45,7 @@ Item {
       Item { width: Math.max(0, (parent.width - headRow.implicitWidth) / 2); height: 1 }
       Row {
         id: headRow; spacing: Style.space(8)
-        Text { text: "🎵"; font.pixelSize: Style.font.body; anchors.verticalCenter: parent.verticalCenter }
+        Text { text: "󰝚"; font.family: Style.fontFamily; font.pixelSize: Style.font.body; anchors.verticalCenter: parent.verticalCenter }
         Text {
           text: media.idle ? root.t(root.uiLang, "noPlayer") : root.t(root.uiLang, "nowPlaying")
           color: Color.muted; font.pixelSize: Style.font.bodySmall; font.bold: true
@@ -117,8 +117,8 @@ Item {
         asynchronous: true
       }
       Text {
-        anchors.centerIn: parent; text: "♫"
-        color: Color.accent; font.pixelSize: Style.font.title
+        anchors.centerIn: parent; text: "󰎆"
+        color: Color.accent; font.family: Style.fontFamily; font.pixelSize: Style.font.title
         visible: state.art === ""
       }
       // mini equalizer overlay while actually playing
@@ -211,7 +211,7 @@ Item {
         scale: prevMa.pressed ? 0.8 : (prevMa.containsMouse ? 1.08 : 1.0)
         Behavior on scale { NumberAnimation { duration: 160; easing.type: Easing.OutBack; easing.overshoot: 2.6 } }
         Behavior on border.color { ColorAnimation { duration: 130 } }
-        Text { anchors.centerIn: parent; text: "⏮"; color: Color.foreground; font.pixelSize: Style.font.body }
+        Text { anchors.centerIn: parent; text: "󰒮"; color: Color.foreground; font.family: Style.fontFamily; font.pixelSize: Style.font.body }
         MouseArea { id: prevMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
           onClicked: if (root) root.run(["mpris-prev"], load) }
       }
@@ -234,8 +234,8 @@ Item {
           Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutBack; easing.overshoot: 2.4 } }
           Text {
             anchors.centerIn: parent
-            text: state.playing ? "⏸" : "▶"
-            color: Color.background; font.pixelSize: Style.font.subtitle; font.bold: true
+            text: state.playing ? "󰏤" : "󰐊"
+            color: Color.background; font.family: Style.fontFamily; font.pixelSize: Style.font.subtitle; font.bold: true
           }
         }
         MouseArea { id: playMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
@@ -250,7 +250,7 @@ Item {
         scale: nextMa.pressed ? 0.8 : (nextMa.containsMouse ? 1.08 : 1.0)
         Behavior on scale { NumberAnimation { duration: 160; easing.type: Easing.OutBack; easing.overshoot: 2.6 } }
         Behavior on border.color { ColorAnimation { duration: 130 } }
-        Text { anchors.centerIn: parent; text: "⏭"; color: Color.foreground; font.pixelSize: Style.font.body }
+        Text { anchors.centerIn: parent; text: "󰒭"; color: Color.foreground; font.family: Style.fontFamily; font.pixelSize: Style.font.body }
         MouseArea { id: nextMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
           onClicked: if (root) root.run(["mpris-next"], load) }
       }

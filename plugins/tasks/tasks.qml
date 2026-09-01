@@ -28,7 +28,7 @@ Item {
     if (root && pluginKey) root.updateNotchData(pluginKey, m.notchIcon, m.notchText)
   }
   // Notch pill mini-status: pending task count.
-  property string notchIcon: "✓"
+  property string notchIcon: "󰄳"
   property string notchText: "0 pendientes"
   onListChanged: pushNotch()
   onNotchTextChanged: if (root && pluginKey) root.updateNotchData(pluginKey, notchIcon, notchText)
@@ -65,7 +65,7 @@ Item {
               anchors.verticalCenter: parent.verticalCenter
               color: modelData.done ? Color.accent : "transparent"
               border.color: Color.popups.border; border.width: 1
-              Text { anchors.centerIn: parent; text: modelData.done ? "✓" : ""; color: Color.background; font.bold: true; font.pixelSize: Style.font.bodySmall }
+              Text { anchors.centerIn: parent; text: modelData.done ? "󰄳" : ""; color: Color.background; font.family: Style.fontFamily; font.bold: true; font.pixelSize: Style.font.bodySmall }
               MouseArea { anchors.fill: parent; onClicked: if (root) root.run([modelData.done ? "tasks-untoggle" : "tasks-toggle", String(index)], function(){ load() }) }
             }
             Text {
