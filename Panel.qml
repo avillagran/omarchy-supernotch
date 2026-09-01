@@ -288,8 +288,8 @@ Panel {
     owner: root.hostWidget || root
     bar: (root.anchorItem ? root.anchorItem.bar : root.bar)
     open: root.opened
-    centerOnBar: false
-    gap: Style.space(4)
+    centerOnBar: true
+    gap: Style.space(2)
     margin: Style.space(4)
     focusTarget: keyCatcher
     contentWidth: root.cardW
