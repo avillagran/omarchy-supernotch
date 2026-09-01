@@ -36,6 +36,7 @@ PanelWindow {
   // Full-screen layer-shell (like KeyboardPanel) so cardOrigin maps to screen
   // coordinates; only the cardSurface child is painted (translucent).
   anchors.top: true; anchors.left: true; anchors.right: true; anchors.bottom: true
+  exclusionMode: ExclusionMode.Ignore
   mask: Region { width: root.screenW; height: root.screenH }
 
   // Keyboard focus: without this the layer-shell never receives key events
