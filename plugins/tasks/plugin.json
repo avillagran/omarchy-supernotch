@@ -1,7 +1,7 @@
 {
   "key": "tasks",
-  "icon": "✓",
-  "barIcon": "✅",
+  "icon": "󰄳",
+  "barIcon": "󰄳",
   "label": {
     "en": "Tasks",
     "es": "Tareas"
