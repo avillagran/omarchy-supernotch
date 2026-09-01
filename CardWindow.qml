@@ -54,7 +54,14 @@ PanelWindow {
   readonly property real screenW: screen ? screen.width : 0
   readonly property real screenH: screen ? screen.height : 0
 
+  TransformWatcher {
+    id: anchorWatcher
+    a: anchorWindow ? anchorWindow.contentItem : null
+    b: anchorItem
+  }
+
   readonly property point anchorScreenPos: {
+    anchorWatcher.transform
     if (!anchorItem || !anchorWindow) return Qt.point(0, 0)
     return anchorItem.mapToItem(anchorWindow.contentItem, 0, 0)
   }

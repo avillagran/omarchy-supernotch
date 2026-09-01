@@ -332,11 +332,11 @@ Panel {
       // drop shadow (follows the wrap's transform and the THEME radius)
       Rectangle {
         anchors.fill: cardSurface
-        anchors.margins: -Style.space(6)
-        radius: cardSurface.radius + Style.space(2)
-        color: "#000000"; opacity: 0.45 * root.bgOpacity; z: -1
+        anchors.margins: -Style.space(2)
+        radius: cardSurface.radius + Style.space(1)
+        color: "#000000"; opacity: 0.30 * root.bgOpacity; z: -1
         layer.enabled: true
-        layer.effect: MultiEffect { blurEnabled: true; blurMax: 34; blur: 1.0 }
+        layer.effect: MultiEffect { blurEnabled: true; blurMax: 20; blur: 1.0 }
       }
 
     // ══ CARD SURFACE — translucent glass with a living aurora INSIDE ═══════
