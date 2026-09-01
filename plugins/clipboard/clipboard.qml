@@ -36,7 +36,7 @@ Item {
   // When the card opens, the user is reviewing → reset the "new" baseline.
   Connections { target: root; function onOpenedChanged() { if (root && root.opened) { m.seenCount = m.list.length; m.pushNotch() } } }
   // Notch pill mini-status: clipboard icon + "+N" new badge.
-  property string notchIcon: "📋"
+  property string notchIcon: "󰅇"
   property string notchText: ""
 
   Column {
@@ -62,9 +62,10 @@ Item {
             height: Style.space(34)
             Text {
               anchors.centerIn: parent
-              text: (modelData.sensitive ? "🔒 " : "• ") +
+              text: (modelData.sensitive ? "󰌾 " : "• ") +
                     (modelData.txt.length > 46 ? modelData.txt.slice(0, 44) + "…" : modelData.txt)
               color: modelData.sensitive ? Color.muted : Color.foreground
+              font.family: Style.fontFamily
               font.pixelSize: Style.font.caption
               elide: Text.ElideRight; width: parent.width - Style.space(20)
             }
@@ -80,7 +81,7 @@ Item {
           spacing: Style.space(8)
           topPadding: Style.space(48)
           Text {
-            text: "📋"; font.pixelSize: Style.font.display * 1.4
+            text: "󰅇"; font.family: Style.fontFamily; font.pixelSize: Style.font.display * 1.4
             color: Color.accent; opacity: 0.25
             anchors.horizontalCenter: parent.horizontalCenter
           }

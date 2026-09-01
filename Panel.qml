@@ -289,8 +289,8 @@ Panel {
     bar: (root.anchorItem ? root.anchorItem.bar : root.bar)
     open: root.opened
     centerOnBar: true
-    gap: Style.space(2)
-    margin: Style.space(4)
+    gap: 0
+    margin: 0
     focusTarget: keyCatcher
     contentWidth: root.cardW
     contentHeight: root.cardH
