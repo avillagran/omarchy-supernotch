@@ -55,7 +55,10 @@
     "bgOpacity": "Transparency",
     "showInNotch": "Show in notch",
     "notchInset": "Notch interior",
-    "darkCenter": "Dark notch center"
+    "darkCenter": "Dark notch center",
+    "notchSide": "Side",
+    "sideLeft": "Left",
+    "sideRight": "Right"
   },
   "es": {
     "notchTooltip": "SuperNotch — centro de control",
@@ -113,7 +116,10 @@
     "bgOpacity": "Transparencia",
     "showInNotch": "Mostrar en el notch",
     "notchInset": "Interior del notch",
-    "darkCenter": "Centro del notch oscuro"
+    "darkCenter": "Centro del notch oscuro",
+    "notchSide": "Lado",
+    "sideLeft": "Izquierda",
+    "sideRight": "Derecha"
   },
   "pt": {
     "notchTooltip": "SuperNotch — centro de comando",

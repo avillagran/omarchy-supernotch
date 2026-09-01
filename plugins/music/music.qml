@@ -24,9 +24,8 @@ Item {
     })
   }
   // ── native Mpris (Quickshell.Services.Mpris) — mirrors omarchy.media Service ──
-  readonly property var mprisPlayers: Mpris.players ? Mpris.players.values : []
   readonly property var activeMprisPlayer: {
-    var pls = mprisPlayers
+    var pls = (Mpris.players && Mpris.players.values) ? Mpris.players.values : []
     if (!pls || pls.length === 0) return null
     for (var i = 0; i < pls.length; i++) if (pls[i] && pls[i].isPlaying) return pls[i]
     for (var j = 0; j < pls.length; j++) if (pls[j] && pls[j].trackTitle) return pls[j]

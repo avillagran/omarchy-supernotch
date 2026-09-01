@@ -86,6 +86,7 @@ Panel {
   property bool darkCenter: false   // paint the center gap dark so the notch hollow is visible
   property var pluginOrder: []
   property var notchPlugins: []
+  property var notchSides: ({})   // key → "left"|"right" (default right)
   function loadPrefs() {
     run(["get-prefs"], function (out) {
       try {
@@ -120,6 +121,7 @@ Panel {
         else if (p.notchDarkCenter === "false" || p.notchDarkCenter === "0") root.darkCenter = false
         if (Array.isArray(p.pluginOrder)) root.pluginOrder = p.pluginOrder
         if (Array.isArray(p.notchPlugins)) root.notchPlugins = p.notchPlugins
+        if (typeof p.notchSides === "object" && p.notchSides !== null && !Array.isArray(p.notchSides)) root.notchSides = p.notchSides
         root.recomputeNotch()
         root.pushBar()
       } catch (e) {}
@@ -162,8 +164,9 @@ Panel {
       return {
         key: p.key,
         dir: p.dir,
-        icon: nd.icon || p.barIcon || p.icon || "◇",   // bar-widget glyph
-        panelIcon: p.icon || "◇",                       // tab glyph (panel)
+        side: root.sideOf(p.key),
+        icon: nd.icon || p.barIcon || p.icon || "◇",
+        panelIcon: p.icon || "◇",
         text: nd.text || ((p.label && (p.label[lang] || p.label.en)) || p.key),
         label: p.label
       }
@@ -182,6 +185,18 @@ Panel {
     root.run(["set-notch", JSON.stringify(en)], function () {})
     root.recomputeNotch()
     root.pushBar()
+  }
+  function setSide(key, side) {
+    var s = (root.notchSides || {})
+    s[key] = (side === "left") ? "left" : "right"
+    root.notchSides = s
+    root.run(["set-side", key, s[key]], function () {})
+    root.recomputeNotch()
+    root.pushBar()
+  }
+  function sideOf(key) {
+    var s = root.notchSides || {}
+    return s[key] === "left" ? "left" : "right"
   }
   function reorderPlugin(fromKey, toIdx) {
     var all = root.plugins
