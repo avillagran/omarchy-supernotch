@@ -68,28 +68,46 @@ PanelWindow {
   readonly property real anchorW: anchorItem ? anchorItem.width : 0
   readonly property real anchorH: anchorItem ? anchorItem.height : 0
 
-  // Desired top-left of the card in screen coordinates (copied from KeyboardPanel).
+  // Desired top-left of the card in screen coordinates.
+  // Unlike KeyboardPanel (which pegs to the bar window edge), SuperNotch
+  // must appear to grow directly from the pill itself. The pill is
+  // vertically centered inside the bar window, so barH would leave a
+  // visible gap equal to (barH - pillHeight)/2. Use the pill's actual
+  // screen geometry (anchorScreenPos + anchorH/W) for the perpendicular
+  // axis so the card touches the pill with gap==0.
   readonly property point cardOrigin: {
     if (!anchorItem || !bar) return Qt.point(margin, margin)
     var x = 0, y = 0
     if (centerOnBar && (barPos === "top" || barPos === "bottom")) {
       x = screenW / 2 - contentWidth / 2
-      y = barPos === "bottom" ? screenH - barH - contentHeight - gap : barH + gap
+      if (barPos === "bottom") {
+        var pillTopB = screenH - barH + anchorScreenPos.y
+        y = pillTopB - contentHeight - gap
+      } else {
+        var pillBottomT = anchorScreenPos.y + anchorH
+        y = pillBottomT + gap
+      }
     } else if (centerOnBar) {
-      x = barPos === "left" ? barW + gap : screenW - barW - contentWidth - gap
-      y = screenH / 2 - contentHeight / 2
+      if (barPos === "left") {
+        x = anchorScreenPos.x + anchorW + gap
+        y = screenH / 2 - contentHeight / 2
+      } else {
+        x = screenW - barW + anchorScreenPos.x - contentWidth - gap
+        y = screenH / 2 - contentHeight / 2
+      }
     } else if (barPos === "bottom") {
       x = anchorScreenPos.x + anchorW / 2 - contentWidth / 2
-      y = screenH - barH - contentHeight - gap
+      var pillTopB2 = screenH - barH + anchorScreenPos.y
+      y = pillTopB2 - contentHeight - gap
     } else if (barPos === "left") {
-      x = barW + gap
+      x = anchorScreenPos.x + anchorW + gap
       y = anchorScreenPos.y + anchorH / 2 - contentHeight / 2
     } else if (barPos === "right") {
-      x = screenW - barW - contentWidth - gap
+      x = screenW - barW + anchorScreenPos.x - contentWidth - gap
       y = anchorScreenPos.y + anchorH / 2 - contentHeight / 2
-    } else { // "top" (default)
+    } else {
       x = anchorScreenPos.x + anchorW / 2 - contentWidth / 2
-      y = barH + gap
+      y = anchorScreenPos.y + anchorH + gap
     }
     x = Math.max(margin, Math.min(x, screenW - contentWidth - margin))
     y = Math.max(margin, Math.min(y, screenH - contentHeight - margin))
