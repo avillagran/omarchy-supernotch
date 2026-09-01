@@ -1,6 +1,6 @@
 {
   "key": "settings",
-  "icon": "⚙",
+  "icon": "",
   "barIcon": "",
   "label": { "en": "Settings", "es": "Ajustes" },
   "ui": "settings.qml",

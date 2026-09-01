@@ -1,6 +1,6 @@
 {
   "key": "music",
-  "icon": "🎵",
+  "icon": "󰝚",
   "barIcon": "󰝚",
   "label": { "en": "Media", "es": "Medios" },
   "ui": "music.qml",
