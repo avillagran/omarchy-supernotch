@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Effects
+import Quickshell.Services.Mpris
 import qs.Commons
 import qs.Ui
 
@@ -14,18 +15,70 @@ Item {
   implicitHeight: mainCol.implicitHeight + Style.space(40)
 
   function load() {
+    // Prefer native Quickshell Mpris (same source as Omarchy bar) — instant & reliable.
+    // Fallback to helper gdbus if no Mpris player yet (e.g. during startup).
+    if (syncFromMpris()) return
     if (!root) return
     root.run(["mpris"], function (out) {
-      try { state = JSON.parse(out.trim()) } catch (e) {}
+      try { state = JSON.parse(out.trim()); pushNotch() } catch (e) {}
     })
   }
-  Component.onCompleted: if (root) load()
-  onRootChanged: if (root) load()
-  Connections { target: root; function onOpenedChanged() { if (root && root.opened) load() } }
-  Timer { interval: 1000; running: root && root.opened; repeat: true; onTriggered: load() }
+  // ── native Mpris (Quickshell.Services.Mpris) — mirrors omarchy.media Service ──
+  readonly property var mprisPlayers: Mpris.players ? Mpris.players.values : []
+  readonly property var activeMprisPlayer: {
+    var pls = mprisPlayers
+    if (!pls || pls.length === 0) return null
+    for (var i = 0; i < pls.length; i++) if (pls[i] && pls[i].isPlaying) return pls[i]
+    for (var j = 0; j < pls.length; j++) if (pls[j] && pls[j].trackTitle) return pls[j]
+    return pls[0]
+  }
+  function syncFromMpris() {
+    var p = activeMprisPlayer
+    if (!p) return false
+    var len = p.length || 0
+    var pos = p.position || 0
+    // Quickshell reports seconds (float < 10000), helper uses microseconds.
+    // Normalize to microseconds for fmt() and progress math.
+    if (len > 0 && len < 10000) len = Math.round(len * 1000000)
+    if (pos >= 0 && pos < 10000) pos = Math.round(pos * 1000000)
+    // artUrl may be file:// — Image handles it directly
+    state = {
+      playing: !!p.isPlaying,
+      title: p.trackTitle || "",
+      artist: p.trackArtist || "",
+      album: p.trackAlbum || "",
+      art: p.trackArtUrl || "",
+      length: len,
+      position: pos,
+      player: p.identity || p.desktopEntry || p.busName || "",
+      hasPlayer: true,
+      canPlay: !!p.canPlay,
+      canPause: !!p.canPause,
+      canGoNext: !!p.canGoNext,
+      canGoPrev: !!(p.canGoPrevious || p.canGoNext),
+      canGoPrevious: !!(p.canGoPrevious || p.canGoNext)
+    }
+    pushNotch()
+    return true
+  }
+  onActiveMprisPlayerChanged: syncFromMpris()
+  Connections { target: Mpris; function onPlayersChanged() { media.syncFromMpris() } }
+  Component.onCompleted: if (root) { syncFromMpris(); load(); pushNotch() }
+  onRootChanged: if (root) { syncFromMpris(); load(); pushNotch() }
+  Connections { target: root; function onOpenedChanged() { if (root && root.opened) { media.syncFromMpris(); load() } } }
+  Timer { interval: 1000; running: root && root.opened; repeat: true; onTriggered: { if (!media.syncFromMpris()) load() } }
 
   property var state: ({ playing:false, title:"", artist:"", album:"", art:"", length:0, position:0, player:"", hasPlayer:false, canPlay:false, canPause:false, canGoNext:false, canGoPrev:false })
   readonly property bool idle: !state.title || state.title === ""
+  // ── notch pill — live track ──
+  property string notchIcon: state.playing ? "󰏤" : "󰝚"
+  property string notchText: media.idle ? "" : (state.title + (state.artist ? " · " + state.artist : ""))
+  function pushNotch() {
+    if (root && pluginKey) root.updateNotchData(pluginKey, notchIcon, notchText)
+  }
+  onNotchIconChanged: pushNotch()
+  onNotchTextChanged: pushNotch()
+  onStateChanged: pushNotch()
 
   function fmt(us) {
     var s = Math.max(0, Math.round((us || 0) / 1000000))
@@ -159,6 +212,12 @@ Item {
         color: Color.muted; font.pixelSize: Style.font.bodySmall
         horizontalAlignment: Text.AlignHCenter; elide: Text.ElideRight; width: parent.width
       }
+      Text {
+        visible: !!(state.album && state.album !== "")
+        text: state.album ? state.album : ""
+        color: Color.muted; font.pixelSize: Style.font.caption; font.italic: true
+        horizontalAlignment: Text.AlignHCenter; elide: Text.ElideRight; width: parent.width
+      }
     }
 
     // progress with time labels; click to seek
@@ -185,6 +244,20 @@ Item {
           anchors.fill: parent
           anchors.margins: -Style.space(6)
           cursorShape: Qt.PointingHandCursor
+          property bool dragging: false
+          onPressed: dragging = true
+          onPositionChanged: if (dragging && pressed) {
+            if (!root || state.length <= 0) return
+            var ratio = Math.max(0, Math.min(1, mouse.x / progressTrack.width))
+            var us = Math.round(ratio * state.length)
+            var ns = state; ns.position = us; state = ns
+          }
+          onReleased: {
+            dragging = false
+            if (!root || state.length <= 0) return
+            var ratio = Math.max(0, Math.min(1, mouse.x / progressTrack.width))
+            root.run(["mpris-setpos", String(Math.round(ratio * state.length))], load)
+          }
           onClicked: {
             if (!root || state.length <= 0) return
             var ratio = Math.max(0, Math.min(1, mouse.x / progressTrack.width))
