@@ -131,10 +131,10 @@ BarWidget {
     Behavior on color { ColorAnimation { duration: 160 } }
     // Show side-by-side (split around the center gap) when the AVAILABLE space
     // fits all plugins: available = pill width − notchInset (the hollow center).
-    // Otherwise tick one at a time. No manual widening needed — the physical
-    // notch gap is always subtracted from the usable width.
+    // Otherwise tick one at a time. Use a compact per-item budget so the default
+    // 20% width on a 3456px monitor shows all 4 plugins side-by-side.
     readonly property real usableW: Math.max(0, pill.width - notchInset)
-    readonly property bool showAll: pill.enabledList.length > 0 && pill.usableW >= Math.max(1, pill.enabledList.length) * 130
+    readonly property bool showAll: pill.enabledList.length > 0 && pill.usableW >= Math.max(1, pill.enabledList.length) * 90
     function leftHalf()  { var l = pill.enabledList, n = l.length, cut = Math.ceil(n / 2); return l.slice(0, cut) }
     function rightHalf() { var l = pill.enabledList, n = l.length, cut = Math.ceil(n / 2); return l.slice(cut) }
     Timer {
@@ -155,17 +155,17 @@ BarWidget {
       height: parent.height
       color: Color.background
       visible: root.darkCenter
-      z: 1
+      z: 0
     }
 
-    // left side: hugs the center gap from the left
+    // left side: hugs the center gap from the left ([0][1] reading left→right)
     Row {
       id: leftRow
+      z: 2
       anchors.verticalCenter: parent.verticalCenter
       anchors.right: parent.horizontalCenter
       anchors.rightMargin: pill.gapHalf
       spacing: Style.space(14)
-      layoutDirection: Qt.RightToLeft
       visible: !root.bar.vertical && pill.showAll
       opacity: (!root.bar.vertical && pill.showAll) ? 1 : 0
       Repeater {
@@ -184,6 +184,7 @@ BarWidget {
     // right side: hugs the center gap from the right
     Row {
       id: rightRow
+      z: 2
       anchors.verticalCenter: parent.verticalCenter
       anchors.left: parent.horizontalCenter
       anchors.leftMargin: pill.gapHalf
