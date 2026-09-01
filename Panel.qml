@@ -116,6 +116,8 @@ Panel {
           run(["set-pref", "notchInset", String(root.notchInsetPct)])  // persist as pct
         }
         if (typeof p.notchDarkCenter === "boolean") root.darkCenter = p.notchDarkCenter
+        else if (p.notchDarkCenter === "true" || p.notchDarkCenter === "1") root.darkCenter = true
+        else if (p.notchDarkCenter === "false" || p.notchDarkCenter === "0") root.darkCenter = false
         if (Array.isArray(p.pluginOrder)) root.pluginOrder = p.pluginOrder
         if (Array.isArray(p.notchPlugins)) root.notchPlugins = p.notchPlugins
         root.recomputeNotch()

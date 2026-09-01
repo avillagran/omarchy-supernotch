@@ -135,8 +135,9 @@ BarWidget {
     // 20% width on a 3456px monitor shows all 4 plugins side-by-side.
     readonly property real usableW: Math.max(0, pill.width - notchInset)
     readonly property bool showAll: pill.enabledList.length > 0 && pill.usableW >= Math.max(1, pill.enabledList.length) * 90
-    function leftHalf()  { var l = pill.enabledList, n = l.length, cut = Math.ceil(n / 2); return l.slice(0, cut) }
-    function rightHalf() { var l = pill.enabledList, n = l.length, cut = Math.ceil(n / 2); return l.slice(cut) }
+    // Reactive halves — Repeater root id is flaky with function calls, use properties
+    readonly property var leftList: { var l = pill.enabledList, c = Math.ceil(l.length / 2); return l.slice(0, c) }
+    readonly property var rightList: { var l = pill.enabledList, c = Math.ceil(l.length / 2); return l.slice(c) }
     Timer {
       interval: 3000; repeat: true
       running: pill.enabledList.length > 1 && !pill.showAll
@@ -158,49 +159,67 @@ BarWidget {
       z: 0
     }
 
-    // left side: hugs the center gap from the left ([0][1] reading left→right)
-    Row {
-      id: leftRow
+    // left side: pinned to LEFT edge of pill | gap | right side pinned to RIGHT edge
+    Item {
+      id: leftContainer
       z: 2
-      anchors.verticalCenter: parent.verticalCenter
+      anchors.left: parent.left
+      anchors.leftMargin: Style.space(8)
       anchors.right: parent.horizontalCenter
-      anchors.rightMargin: pill.gapHalf
-      spacing: Style.space(14)
+      anchors.rightMargin: pill.gapHalf + Style.space(4)
+      anchors.verticalCenter: parent.verticalCenter
+      height: parent.height
+      clip: true
       visible: !root.bar.vertical && pill.showAll
-      opacity: (!root.bar.vertical && pill.showAll) ? 1 : 0
-      Repeater {
-        model: pill.leftHalf()
-        Item {
-          height: childrenRect.height
-          Row {
-            spacing: Style.space(6)
-            Text { text: (modelData.icon || "◇"); color: Color.foreground; font.family: "monospace"; font.pixelSize: Style.font.body; anchors.verticalCenter: parent.verticalCenter }
-            Text { text: (modelData.text || modelData.key); color: Color.foreground; font.pixelSize: Style.font.bodySmall; anchors.verticalCenter: parent.verticalCenter }
+      opacity: visible ? 1 : 0
+      Row {
+        id: leftRow
+        anchors.left: parent.left
+        anchors.verticalCenter: parent.verticalCenter
+        spacing: Style.space(14)
+        Repeater {
+          model: pill.leftList
+          delegate: Item {
+            height: childrenRect.height; width: childrenRect.width
+            Row {
+              spacing: Style.space(6)
+              Text { text: (modelData.icon || "◇"); color: Color.foreground; font.family: Style.fontFamily; font.pixelSize: Style.font.body; anchors.verticalCenter: parent.verticalCenter }
+              Text { text: (modelData.text || modelData.key); color: Color.foreground; font.family: Style.fontFamily; font.pixelSize: Style.font.bodySmall; anchors.verticalCenter: parent.verticalCenter }
+            }
+            MouseArea { anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: { if (panelLoader.item && panelLoader.item.openPlugin) panelLoader.item.openPlugin(modelData.key); else root.clickToggle() } }
           }
-          MouseArea { anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.openPlugin(modelData.key) }
         }
       }
     }
-    // right side: hugs the center gap from the right
-    Row {
-      id: rightRow
+    // right side: pinned to RIGHT edge of pill
+    Item {
+      id: rightContainer
       z: 2
-      anchors.verticalCenter: parent.verticalCenter
+      anchors.right: parent.right
+      anchors.rightMargin: Style.space(8)
       anchors.left: parent.horizontalCenter
-      anchors.leftMargin: pill.gapHalf
-      spacing: Style.space(14)
+      anchors.leftMargin: pill.gapHalf + Style.space(4)
+      anchors.verticalCenter: parent.verticalCenter
+      height: parent.height
+      clip: true
       visible: !root.bar.vertical && pill.showAll
-      opacity: (!root.bar.vertical && pill.showAll) ? 1 : 0
-      Repeater {
-        model: pill.rightHalf()
-        Item {
-          height: childrenRect.height
-          Row {
-            spacing: Style.space(6)
-            Text { text: (modelData.icon || "◇"); color: Color.foreground; font.family: "monospace"; font.pixelSize: Style.font.body; anchors.verticalCenter: parent.verticalCenter }
-            Text { text: (modelData.text || modelData.key); color: Color.foreground; font.pixelSize: Style.font.bodySmall; anchors.verticalCenter: parent.verticalCenter }
+      opacity: visible ? 1 : 0
+      Row {
+        id: rightRow
+        anchors.right: parent.right
+        anchors.verticalCenter: parent.verticalCenter
+        spacing: Style.space(14)
+        Repeater {
+          model: pill.rightList
+          delegate: Item {
+            height: childrenRect.height; width: childrenRect.width
+            Row {
+              spacing: Style.space(6)
+              Text { text: (modelData.icon || "◇"); color: Color.foreground; font.family: Style.fontFamily; font.pixelSize: Style.font.body; anchors.verticalCenter: parent.verticalCenter }
+              Text { text: (modelData.text || modelData.key); color: Color.foreground; font.family: Style.fontFamily; font.pixelSize: Style.font.bodySmall; anchors.verticalCenter: parent.verticalCenter }
+            }
+            MouseArea { anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: { if (panelLoader.item && panelLoader.item.openPlugin) panelLoader.item.openPlugin(modelData.key); else root.clickToggle() } }
           }
-          MouseArea { anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.openPlugin(modelData.key) }
         }
       }
     }
@@ -222,10 +241,10 @@ BarWidget {
           height: childrenRect.height
           Row {
             spacing: Style.space(6)
-            Text { text: (modelData.icon || "◇"); color: Color.foreground; font.family: "monospace"; font.pixelSize: Style.font.body; anchors.verticalCenter: parent.verticalCenter }
-            Text { text: (modelData.text || modelData.key); color: Color.foreground; font.pixelSize: Style.font.bodySmall; anchors.verticalCenter: parent.verticalCenter }
+            Text { text: (modelData.icon || "◇"); color: Color.foreground; font.family: Style.fontFamily; font.pixelSize: Style.font.body; anchors.verticalCenter: parent.verticalCenter }
+            Text { text: (modelData.text || modelData.key); color: Color.foreground; font.family: Style.fontFamily; font.pixelSize: Style.font.bodySmall; anchors.verticalCenter: parent.verticalCenter }
           }
-          MouseArea { anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.openPlugin(modelData.key) }
+          MouseArea { anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: { if (panelLoader.item && panelLoader.item.openPlugin) panelLoader.item.openPlugin(modelData.key); else root.clickToggle() } }
         }
       }
     }
@@ -246,7 +265,7 @@ BarWidget {
           Text {
             text: (modelData.icon || "◇")
             color: Color.foreground
-            font.family: "monospace"
+            font.family: Style.fontFamily
             font.pixelSize: Style.font.body
             anchors.horizontalCenter: parent.horizontalCenter
           }
