@@ -1,7 +1,7 @@
 {
   "key": "weather",
-  "icon": "⛅",
-  "barIcon": "🌤",
+  "icon": "",
+  "barIcon": "",
   "label": {
     "en": "Weather",
     "es": "Clima"

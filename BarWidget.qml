@@ -116,9 +116,20 @@ BarWidget {
     opacity: 1.0
     border.color: Color.accent
     border.width: 2
-    scale: clicker.pressed ? 0.94 : (1.0 + 0.04 * Math.min(1, b))
+    // subtle scale on press (driven by inner clicker)
+    scale: bgClicker.pressed ? 0.94 : (1.0 + 0.04 * Math.min(1, b))
     Behavior on scale { NumberAnimation { duration: 170; easing.type: Easing.OutBack; easing.overshoot: 2.4 } }
     Behavior on border.width { NumberAnimation { duration: 200 } }
+
+    // background clicker — behind the rows so mini-widget clicks win
+    MouseArea {
+      id: bgClicker
+      anchors.fill: parent; z: 1
+      hoverEnabled: true; acceptedButtons: Qt.LeftButton
+      onEntered: root.hovering = true
+      onExited: root.hovering = false
+      onClicked: root.clickToggle()
+    }
 
     // Plugins marked "show in notch" (pushed by Panel.pushBar).
     readonly property var enabledList: root.barPlugins
@@ -275,15 +286,7 @@ BarWidget {
     }
   }
 
-  // single input layer on top
-  MouseArea {
-    id: clicker
-    anchors.fill: parent; z: 5
-    hoverEnabled: true; acceptedButtons: Qt.LeftButton
-    onEntered: root.hovering = true
-    onExited: root.hovering = false
-    onClicked: root.clickToggle()
-  }
+  // (removed: outer clicker now lives inside pill as bgClicker so mini-widgets receive clicks)
 
   Loader {
     id: panelLoader

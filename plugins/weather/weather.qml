@@ -87,7 +87,7 @@ Item {
         m.humidity = cur.humidity || ""
         m.wind = cur.windspeedKmph || ""
         m.kind = m.kindForCode(m.code, parseFloat(m.wind) || 0)
-        m.icon = m.emojiForCode(m.code, isNight)
+        m.icon = m.glyphForCode(m.code, isNight)
         var today = d.weather && d.weather[0]
         if (today) { m.maxC = today.maxtempC; m.minC = today.mintempC }
         // next 3 days forecast (nearest noon entry)
@@ -97,7 +97,7 @@ Item {
           var hr = day.hourly && day.hourly.length > 12 ? day.hourly[11] : (day.hourly && day.hourly[0])
           fc.push({
             day: day.date,
-            icon: m.emojiForCode(hr ? hr.weatherCode : day.hourly[0].weatherCode, false),
+            icon: m.glyphForCode(hr ? hr.weatherCode : day.hourly[0].weatherCode, false),
             maxC: day.maxtempC, minC: day.mintempC
           })
         }
@@ -147,7 +147,7 @@ Item {
       id: wIcon
       text: m.icon || ""
       font.pixelSize: Style.font.displayLarge
-      font.family: "monospace"
+      font.family: Style.fontFamily
       color: Color.foreground
       anchors.verticalCenter: parent.verticalCenter
     }

@@ -38,7 +38,7 @@ Item {
   // Notch pill mini-status: show the time, rotating with the date (ticker).
   property bool showDate: false
   Timer { id: flip; interval: 2000; running: true; repeat: true; onTriggered: { m.showDate = !m.showDate; m.pushNotch() } }
-  property string notchIcon: "🕐"
+  property string notchIcon: "󰥔"
   property string notchText: (function () {
     var f = m.fmt(m.now, (root ? root.uiLang : "en"))
     return m.showDate ? f[1] : f[0]
