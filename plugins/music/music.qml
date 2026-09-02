@@ -1,12 +1,12 @@
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Effects
-import Quickshell.Services.Mpris
 import qs.Commons
 import qs.Ui
 
-// SuperNotch plugin: Medios (MPRIS media control — music, video, any player).
-// Receives `root` (the Panel) for root.run()/root.t().
+// SuperNotch plugin: Medios (MPRIS media control).
+// Polls the helper's `mpris` command (proven, same source as the bar).
+// Controls via helper: mpris-toggle, mpris-play, mpris-pause, mpris-next, mpris-prev, mpris-setpos.
 Item {
   id: media
   property var root: null
@@ -15,60 +15,38 @@ Item {
   implicitHeight: mainCol.implicitHeight + Style.space(40)
 
   function load() {
-    // Prefer native Quickshell Mpris (same source as Omarchy bar) — instant & reliable.
-    // Fallback to helper gdbus if no Mpris player yet (e.g. during startup).
-    if (syncFromMpris()) return
     if (!root) return
     root.run(["mpris"], function (out) {
-      try { state = JSON.parse(out.trim()); pushNotch() } catch (e) {}
+      try {
+        var s = JSON.parse((out || "").trim())
+        state = {
+          playing: !!s.playing,
+          title: s.title || "",
+          artist: s.artist || "",
+          album: s.album || "",
+          art: s.art || "",
+          length: s.length || 0,
+          position: s.position || 0,
+          player: s.player || "",
+          hasPlayer: !!s.hasPlayer,
+          canPlay: !!s.canPlay,
+          canPause: !!s.canPause,
+          canGoNext: !!s.canGoNext,
+          canGoPrev: !!s.canGoPrev,
+          canTogglePlaying: !!(s.canPlay || s.canPause)
+        }
+      } catch (e) {}
+      pushNotch()
     })
   }
-  // ── native Mpris (Quickshell.Services.Mpris) — mirrors omarchy.media Service ──
-  readonly property var activeMprisPlayer: {
-    var pls = (Mpris.players && Mpris.players.values) ? Mpris.players.values : []
-    if (!pls || pls.length === 0) return null
-    for (var i = 0; i < pls.length; i++) if (pls[i] && pls[i].isPlaying) return pls[i]
-    for (var j = 0; j < pls.length; j++) if (pls[j] && pls[j].trackTitle) return pls[j]
-    return pls[0]
-  }
-  function syncFromMpris() {
-    var p = activeMprisPlayer
-    if (!p) return false
-    var len = p.length || 0
-    var pos = p.position || 0
-    // Quickshell reports seconds (float < 10000), helper uses microseconds.
-    // Normalize to microseconds for fmt() and progress math.
-    if (len > 0 && len < 10000) len = Math.round(len * 1000000)
-    if (pos >= 0 && pos < 10000) pos = Math.round(pos * 1000000)
-    // artUrl may be file:// — Image handles it directly
-    state = {
-      playing: !!p.isPlaying,
-      title: p.trackTitle || "",
-      artist: p.trackArtist || "",
-      album: p.trackAlbum || "",
-      art: p.trackArtUrl || "",
-      length: len,
-      position: pos,
-      player: p.identity || p.desktopEntry || p.busName || "",
-      hasPlayer: true,
-      canPlay: !!p.canPlay,
-      canPause: !!p.canPause,
-      canGoNext: !!p.canGoNext,
-      canGoPrev: !!(p.canGoPrevious || p.canGoNext),
-      canGoPrevious: !!(p.canGoPrevious || p.canGoNext)
-    }
-    pushNotch()
-    return true
-  }
-  onActiveMprisPlayerChanged: syncFromMpris()
-  Connections { target: Mpris; function onPlayersChanged() { media.syncFromMpris() } }
-  Component.onCompleted: if (root) { syncFromMpris(); load(); pushNotch() }
-  onRootChanged: if (root) { syncFromMpris(); load(); pushNotch() }
-  Connections { target: root; function onOpenedChanged() { if (root && root.opened) { media.syncFromMpris(); load() } } }
-  Timer { interval: 1000; running: root && root.opened; repeat: true; onTriggered: { if (!media.syncFromMpris()) load() } }
+  Component.onCompleted: if (root) { load(); pushNotch() }
+  onRootChanged: if (root) { load(); pushNotch() }
+  Connections { target: root; function onOpenedChanged() { if (root && root.opened) load() } }
+  Timer { interval: 1000; running: root && root.opened; repeat: true; onTriggered: load() }
 
-  property var state: ({ playing:false, title:"", artist:"", album:"", art:"", length:0, position:0, player:"", hasPlayer:false, canPlay:false, canPause:false, canGoNext:false, canGoPrev:false })
+  property var state: ({ playing:false, title:"", artist:"", album:"", art:"", length:0, position:0, player:"", hasPlayer:false, canPlay:false, canPause:false, canGoNext:false, canGoPrev:false, canTogglePlaying:false })
   readonly property bool idle: !state.title || state.title === ""
+
   // ── notch pill — live track ──
   property string notchIcon: state.playing ? "󰏤" : "󰝚"
   property string notchText: media.idle ? "" : (state.title + (state.artist ? " · " + state.artist : ""))
@@ -79,8 +57,8 @@ Item {
   onNotchTextChanged: pushNotch()
   onStateChanged: pushNotch()
 
-  function fmt(us) {
-    var s = Math.max(0, Math.round((us || 0) / 1000000))
+  function fmt(s) {
+    s = Math.max(0, Math.round(s || 0))
     return Math.floor(s / 60) + ":" + ("0" + (s % 60)).slice(-2)
   }
 
@@ -88,79 +66,59 @@ Item {
     id: mainCol
     x: Style.space(20); y: Style.space(20)
     width: parent.width - Style.space(40)
-    spacing: Style.space(14)
+    spacing: Style.space(16)
 
     // header: status + player chip
     Row {
       width: parent.width
-      anchors.horizontalCenter: parent.horizontalCenter
-      Item { width: Math.max(0, (parent.width - headRow.implicitWidth) / 2); height: 1 }
-      Row {
-        id: headRow; spacing: Style.space(8)
-        Text { text: "󰝚"; font.family: Style.fontFamily; font.pixelSize: Style.font.body; anchors.verticalCenter: parent.verticalCenter }
+      spacing: Style.space(8)
+      Text { text: "󰝚"; font.family: Style.fontFamily; font.pixelSize: Style.font.body; anchors.verticalCenter: parent.verticalCenter }
+      Text {
+        text: media.idle ? root.t(root.uiLang, "noPlayer") : root.t(root.uiLang, "nowPlaying")
+        color: Color.muted; font.pixelSize: Style.font.bodySmall; font.bold: true
+        anchors.verticalCenter: parent.verticalCenter
+      }
+      Rectangle {
+        visible: !!(state.hasPlayer && state.player && state.player !== "")
+        height: Style.space(18); radius: Style.space(9)
+        width: playerChip.implicitWidth + Style.space(14)
+        color: Color.menu.selectedBackground
+        border.color: Color.accent; border.width: 1
+        anchors.verticalCenter: parent.verticalCenter
         Text {
-          text: media.idle ? root.t(root.uiLang, "noPlayer") : root.t(root.uiLang, "nowPlaying")
-          color: Color.muted; font.pixelSize: Style.font.bodySmall; font.bold: true
-          anchors.verticalCenter: parent.verticalCenter
-        }
-        // player chip (Spotify, Firefox, mpv…)
-        Rectangle {
-          visible: !!(state.hasPlayer && state.player && state.player !== "")
-          height: Style.space(18); radius: Style.space(9)
-          width: playerChip.implicitWidth + Style.space(14)
-          color: Color.menu.selectedBackground
-          border.color: Color.accent; border.width: 1
-          anchors.verticalCenter: parent.verticalCenter
-          Text {
-            id: playerChip
-            anchors.centerIn: parent
-            text: state.player ? state.player : ""
-            color: Color.accent; font.pixelSize: Style.font.caption; font.bold: true
-          }
+          id: playerChip
+          anchors.centerIn: parent
+          text: state.player
+          color: Color.accent; font.pixelSize: Style.font.caption; font.bold: true
         }
       }
-      Item { width: Math.max(0, (parent.width - headRow.implicitWidth) / 2); height: 1 }
     }
 
-    // ══ IDLE: living equalizer bars with gradient ══
+    // ══ IDLE: big music note ══
     Item {
       visible: media.idle
-      width: parent.width; height: Style.space(110)
-      Row {
-        anchors.centerIn: parent; spacing: Style.space(7); height: parent.height
-        Repeater {
-          model: 7
-          Item {
-            width: Style.space(5); height: parent.height
-            Rectangle {
-              width: parent.width; radius: Style.space(2.5)
-              y: parent.height - height
-              height: Style.space(10)
-              gradient: Gradient {
-                GradientStop { position: 0.0; color: Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.25) }
-                GradientStop { position: 1.0; color: Color.accent }
-              }
-              opacity: 0.5 + 0.12 * Math.abs(3 - index)
-              SequentialAnimation on height {
-                loops: Animation.Infinite; running: visible
-                NumberAnimation { to: Style.space(16 + (index % 4) * 12); duration: 480 + index * 137; easing.type: Easing.InOutSine }
-                NumberAnimation { to: Style.space(8); duration: 520 + index * 113; easing.type: Easing.InOutSine }
-              }
-            }
-          }
-        }
+      width: parent.width; height: Style.space(120)
+      Text {
+        anchors.centerIn: parent; text: "󰝚"
+        color: Color.accent; font.family: Style.fontFamily; font.pixelSize: Style.font.display * 1.5
+        opacity: 0.4
+      }
+      Text {
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.bottom: parent.bottom
+        text: root.t(root.uiLang, "noPlayer")
+        color: Color.muted; font.pixelSize: Style.font.body
       }
     }
 
-    // ══ PLAYING: album art + track + clickable progress ══
+    // ══ PLAYING: album art + track + progress ══
     Rectangle {
       visible: !media.idle
-      width: Style.space(84); height: Style.space(84); radius: Style.space(18)
+      width: Style.space(88); height: Style.space(88); radius: Style.space(20)
       color: Color.menu.selectedBackground
       anchors.horizontalCenter: parent.horizontalCenter
       border.color: Color.accent; border.width: 1
       clip: true
-      layer.enabled: true
       Image {
         anchors.fill: parent
         source: state.art || ""
@@ -173,53 +131,30 @@ Item {
         color: Color.accent; font.family: Style.fontFamily; font.pixelSize: Style.font.title
         visible: state.art === ""
       }
-      // mini equalizer overlay while actually playing
-      Row {
-        visible: !!state.playing
-        anchors.horizontalCenter: parent.horizontalCenter
-        anchors.bottom: parent.bottom; anchors.bottomMargin: Style.space(8)
-        spacing: Style.space(2.5); height: Style.space(14)
-        Repeater {
-          model: 3
-          Item {
-            width: Style.space(3); height: parent.height
-            Rectangle {
-              width: parent.width; radius: Style.space(1.5)
-              y: parent.height - height; height: Style.space(4)
-              color: Color.foreground
-              SequentialAnimation on height {
-                loops: Animation.Infinite; running: !!state.playing
-                NumberAnimation { to: Style.space(6 + (index % 3) * 4); duration: 380 + index * 120; easing.type: Easing.InOutSine }
-                NumberAnimation { to: Style.space(3); duration: 420 + index * 90; easing.type: Easing.InOutSine }
-              }
-            }
-          }
-        }
-      }
     }
 
     Column {
       visible: !media.idle
       spacing: Style.space(4); width: parent.width
       Text {
-        text: state.title ? state.title : ""
+        text: state.title || ""
         color: Color.foreground; font.pixelSize: Style.font.subtitle; font.bold: true
         horizontalAlignment: Text.AlignHCenter; elide: Text.ElideRight; width: parent.width
       }
       Text {
-        text: state.artist ? state.artist : ""
+        text: state.artist || ""
         color: Color.muted; font.pixelSize: Style.font.bodySmall
         horizontalAlignment: Text.AlignHCenter; elide: Text.ElideRight; width: parent.width
       }
       Text {
         visible: !!(state.album && state.album !== "")
-        text: state.album ? state.album : ""
+        text: state.album || ""
         color: Color.muted; font.pixelSize: Style.font.caption; font.italic: true
         horizontalAlignment: Text.AlignHCenter; elide: Text.ElideRight; width: parent.width
       }
     }
 
-    // progress with time labels; click to seek
+    // progress with time labels
     Row {
       visible: !media.idle
       width: parent.width; spacing: Style.space(8)
@@ -237,7 +172,7 @@ Item {
           width: parent.width * Math.min(1, (state.length > 0 ? state.position / state.length : 0))
           height: parent.height; radius: parent.height / 2
           color: Color.accent
-          Behavior on width { NumberAnimation { duration: 400 } }
+          Behavior on width { NumberAnimation { duration: 250 } }
         }
         MouseArea {
           anchors.fill: parent
@@ -246,18 +181,12 @@ Item {
           property bool dragging: false
           onPressed: dragging = true
           onPositionChanged: if (dragging && pressed) {
-            if (!root || state.length <= 0) return
+            if (state.length <= 0) return
             var ratio = Math.max(0, Math.min(1, mouse.x / progressTrack.width))
-            var us = Math.round(ratio * state.length)
-            var ns = state; ns.position = us; state = ns
+            var ns = state; ns.position = Math.round(ratio * state.length); state = ns
           }
           onReleased: {
             dragging = false
-            if (!root || state.length <= 0) return
-            var ratio = Math.max(0, Math.min(1, mouse.x / progressTrack.width))
-            root.run(["mpris-setpos", String(Math.round(ratio * state.length))], load)
-          }
-          onClicked: {
             if (!root || state.length <= 0) return
             var ratio = Math.max(0, Math.min(1, mouse.x / progressTrack.width))
             root.run(["mpris-setpos", String(Math.round(ratio * state.length))], load)
@@ -273,9 +202,10 @@ Item {
 
     // ══ transport controls — magnetic, bouncy ══
     Row {
-      spacing: Style.space(18); anchors.horizontalCenter: parent.horizontalCenter
+      spacing: Style.space(20); anchors.horizontalCenter: parent.horizontalCenter
+      // PREV
       Rectangle {
-        width: Style.space(42); height: Style.space(42); radius: Style.space(21)
+        width: Style.space(44); height: Style.space(44); radius: Style.space(22)
         color: Color.menu.selectedBackground
         border.color: prevMa.containsMouse ? Color.accent : Color.popups.border
         border.width: 1
@@ -287,11 +217,12 @@ Item {
         MouseArea { id: prevMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
           onClicked: if (root) root.run(["mpris-prev"], load) }
       }
+      // PLAY/PAUSE
       Item {
-        width: Style.space(56); height: Style.space(56)
+        width: Style.space(60); height: Style.space(60)
         Rectangle {
           anchors.centerIn: parent
-          width: Style.space(52); height: Style.space(52); radius: Style.space(26)
+          width: Style.space(54); height: Style.space(54); radius: Style.space(27)
           color: Color.accent; opacity: 0.4
           layer.enabled: true
           layer.effect: MultiEffect { blurEnabled: true; blurMax: 28; blur: 1.0 }
@@ -300,7 +231,7 @@ Item {
         Rectangle {
           id: playBtn
           anchors.centerIn: parent
-          width: Style.space(48); height: Style.space(48); radius: Style.space(24)
+          width: Style.space(50); height: Style.space(50); radius: Style.space(25)
           color: Color.accent
           scale: playMa.pressed ? 0.82 : (playMa.containsMouse ? 1.08 : 1.0)
           Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutBack; easing.overshoot: 2.4 } }
@@ -313,8 +244,9 @@ Item {
         MouseArea { id: playMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
           onClicked: if (root) root.run(["mpris-toggle"], load) }
       }
+      // NEXT
       Rectangle {
-        width: Style.space(42); height: Style.space(42); radius: Style.space(21)
+        width: Style.space(44); height: Style.space(44); radius: Style.space(22)
         color: Color.menu.selectedBackground
         border.color: nextMa.containsMouse ? Color.accent : Color.popups.border
         border.width: 1
