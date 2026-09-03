@@ -58,7 +58,8 @@
     "darkCenter": "Dark notch center",
     "notchSide": "Side",
     "sideLeft": "Left",
-    "sideRight": "Right"
+    "sideRight": "Right",
+    "addCity": "Search city or timezone"
   },
   "es": {
     "notchTooltip": "SuperNotch — centro de control",
@@ -119,7 +120,8 @@
     "darkCenter": "Centro del notch oscuro",
     "notchSide": "Lado",
     "sideLeft": "Izquierda",
-    "sideRight": "Derecha"
+    "sideRight": "Derecha",
+    "addCity": "Buscar ciudad o zona horaria"
   },
   "pt": {
     "notchTooltip": "SuperNotch — centro de comando",

@@ -67,7 +67,7 @@ Item {
         width: Style.space(18); height: Style.space(18); radius: Style.space(9)
         y: Style.space(4)
         x: tr.checked ? parent.width - width - Style.space(4) : Style.space(4)
-        color: tr.checked ? Color.background : Color.muted
+        color: tr.checked ? Color.background : Qt.darker(Color.foreground, 1.5)
         Behavior on x { NumberAnimation { duration: 170; easing.type: Easing.OutBack } }
         Behavior on color { ColorAnimation { duration: 160 } }
       }
@@ -112,7 +112,7 @@ Item {
           visible: root ? root.isNotch(modelData.key) : false
           Text {
             text: root ? root.t(root.uiLang, "notchSide") + ":" : "Side:"
-            color: Color.muted; font.pixelSize: Style.font.caption
+            color: Qt.darker(Color.foreground, 1.5); font.pixelSize: Style.font.caption
             anchors.verticalCenter: parent.verticalCenter
             anchors.left: parent.left; anchors.leftMargin: Style.space(2)
           }
@@ -127,13 +127,13 @@ Item {
               Rectangle {
                 width: Style.space(44); height: Style.space(18); radius: Style.space(9)
                 color: (root && root.sideOf(modelData.key) === "left") ? Color.accent : "transparent"
-                Text { anchors.centerIn: parent; text: root ? root.t(root.uiLang, "sideLeft") : "L"; color: (root && root.sideOf(modelData.key) === "left") ? Color.background : Color.muted; font.pixelSize: Style.font.caption; font.family: Style.fontFamily }
+                Text { anchors.centerIn: parent; text: root ? root.t(root.uiLang, "sideLeft") : "L"; color: (root && root.sideOf(modelData.key) === "left") ? Color.background : Qt.darker(Color.foreground, 1.5); font.pixelSize: Style.font.caption; font.family: Style.fontFamily }
                 MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: if (root) root.setSide(modelData.key, "left") }
               }
               Rectangle {
                 width: Style.space(44); height: Style.space(18); radius: Style.space(9)
                 color: (root && root.sideOf(modelData.key) !== "left") ? Color.accent : "transparent"
-                Text { anchors.centerIn: parent; text: root ? root.t(root.uiLang, "sideRight") : "R"; color: (root && root.sideOf(modelData.key) !== "left") ? Color.background : Color.muted; font.pixelSize: Style.font.caption; font.family: Style.fontFamily }
+                Text { anchors.centerIn: parent; text: root ? root.t(root.uiLang, "sideRight") : "R"; color: (root && root.sideOf(modelData.key) !== "left") ? Color.background : Qt.darker(Color.foreground, 1.5); font.pixelSize: Style.font.caption; font.family: Style.fontFamily }
                 MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: if (root) root.setSide(modelData.key, "right") }
               }
             }

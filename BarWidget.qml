@@ -166,6 +166,10 @@ BarWidget {
     }
 
     // left side: pinned to LEFT edge of pill | gap | right side pinned to RIGHT edge
+    // Per-item text budget: the half-width split evenly among items (minus icon+gap).
+    readonly property real halfW: Math.max(40, (pill.width - notchInset) / 2 - Style.space(12))
+    readonly property real leftItemW: Math.max(60, pill.halfW / Math.max(1, pill.leftList.length) - Style.space(30))
+    readonly property real rightItemW: Math.max(60, pill.halfW / Math.max(1, pill.rightList.length) - Style.space(30))
     Item {
       id: leftContainer
       z: 2
@@ -190,7 +194,7 @@ BarWidget {
             Row {
               spacing: Style.space(6)
               Text { text: (modelData.icon || "◇"); color: Color.foreground; font.family: Style.fontFamily; font.pixelSize: Style.font.body; anchors.verticalCenter: parent.verticalCenter }
-              Text { text: (modelData.text || modelData.key); color: Color.foreground; font.family: Style.fontFamily; font.pixelSize: Style.font.bodySmall; anchors.verticalCenter: parent.verticalCenter }
+              MarqueeText { text: (modelData.text || modelData.key); color: Color.foreground; fontFamily: Style.fontFamily; fontSize: Style.font.bodySmall; maxW: pill.leftItemW }
             }
             MouseArea { anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: { if (panelLoader.item && panelLoader.item.openPlugin) panelLoader.item.openPlugin(modelData.key); else root.clickToggle() } }
           }
@@ -222,7 +226,7 @@ BarWidget {
             Row {
               spacing: Style.space(6)
               Text { text: (modelData.icon || "◇"); color: Color.foreground; font.family: Style.fontFamily; font.pixelSize: Style.font.body; anchors.verticalCenter: parent.verticalCenter }
-              Text { text: (modelData.text || modelData.key); color: Color.foreground; font.family: Style.fontFamily; font.pixelSize: Style.font.bodySmall; anchors.verticalCenter: parent.verticalCenter }
+              MarqueeText { text: (modelData.text || modelData.key); color: Color.foreground; fontFamily: Style.fontFamily; fontSize: Style.font.bodySmall; maxW: pill.rightItemW }
             }
             MouseArea { anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: { if (panelLoader.item && panelLoader.item.openPlugin) panelLoader.item.openPlugin(modelData.key); else root.clickToggle() } }
           }
@@ -248,7 +252,7 @@ BarWidget {
           Row {
             spacing: Style.space(6)
             Text { text: (modelData.icon || "◇"); color: Color.foreground; font.family: Style.fontFamily; font.pixelSize: Style.font.body; anchors.verticalCenter: parent.verticalCenter }
-            Text { text: (modelData.text || modelData.key); color: Color.foreground; font.family: Style.fontFamily; font.pixelSize: Style.font.bodySmall; anchors.verticalCenter: parent.verticalCenter }
+            MarqueeText { text: (modelData.text || modelData.key); color: Color.foreground; fontFamily: Style.fontFamily; fontSize: Style.font.bodySmall; maxW: pill.halfW - Style.space(30) }
           }
           MouseArea { anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: { if (panelLoader.item && panelLoader.item.openPlugin) panelLoader.item.openPlugin(modelData.key); else root.clickToggle() } }
         }

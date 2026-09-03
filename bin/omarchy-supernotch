@@ -185,6 +185,54 @@ mpris_setpos() {
     --method org.mpris.MediaPlayer2.Player SetPosition "/org/mpris/MediaPlayer2" "$(printf '%d' "$1")" >/dev/null 2>&1
 }
 
+# ---- world clocks -----------------------------------------------------------
+# List of user-added IANA timezones in prefs.worldClocks. The local clock
+# (system timezone = "la capital actual") is always prepended by the list cmd.
+tz_city() { # America/New_York -> "New York"
+  printf '%s' "$1" | sed 's#.*/##; s/_/ /g'
+}
+tz_time() { # America/New_York -> HH:MM
+  TZ="$1" date +%H:%M 2>/dev/null || echo ""
+}
+worldclock_list() {
+  local local_tz; local_tz=$(timedatectl show --property=Timezone --value 2>/dev/null || echo "UTC")
+  {
+    jq -nc --arg tz "$local_tz" --arg name "$(tz_city "$local_tz")" --arg time "$(tz_time "$local_tz")" \
+      '{name:$name, tz:$tz, time:$time, local:true}'
+    read_prefs | jq -r '.worldClocks // [] | .[]' 2>/dev/null | while IFS= read -r tz; do
+      [ -z "$tz" ] && continue
+      jq -nc --arg tz "$tz" --arg name "$(tz_city "$tz")" --arg time "$(tz_time "$tz")" \
+        '{name:$name, tz:$tz, time:$time, local:false}'
+    done
+  } | jq -sc .
+}
+worldclock_add() { # $1 = IANA tz; validated against timedatectl
+  local tz="$1"
+  timedatectl list-timezones 2>/dev/null | grep -qx "$tz" || return 1
+  cur=$(read_prefs)
+  tmp=$(mktemp -p "$STATE_DIR")
+  printf '%s' "$cur" | jq --arg tz "$tz" \
+    '.worldClocks = ((.worldClocks // []) | map(select(. != $tz)) | . + [$tz])' > "$tmp" \
+    && mv -f "$tmp" "$PREFS" || rm -f "$tmp"
+  worldclock_list
+}
+worldclock_del() { # $1 = IANA tz
+  cur=$(read_prefs)
+  tmp=$(mktemp -p "$STATE_DIR")
+  printf '%s' "$cur" | jq --arg tz "$1" \
+    '.worldClocks = ((.worldClocks // []) | map(select(. != $tz)))' > "$tmp" \
+    && mv -f "$tmp" "$PREFS" || rm -f "$tmp"
+  worldclock_list
+}
+worldclock_zones() { # $1 = optional filter fragment; up to 8 matches
+  local f="${1:-}"
+  if [ -n "$f" ]; then
+    timedatectl list-timezones 2>/dev/null | grep -i -- "$f" | head -8
+  else
+    timedatectl list-timezones 2>/dev/null | head -8
+  fi
+}
+
 # ---- clipboard ------------------------------------------------------------
 clip_masked() {
   # returns "true" if text looks sensitive
@@ -339,6 +387,10 @@ case "${1:-}" in
   mpris-seek-)      mpris_seek -10000000 ;;
   mpris-setpos)     mpris_setpos "$2" ;;
   mpris-set)        mpris_setpos "$2" ;;
+  worldclock-list)   worldclock_list ;;
+  worldclock-add)    worldclock_add "$2" ;;
+  worldclock-del)    worldclock_del "$2" ;;
+  worldclock-zones)  worldclock_zones "$2" ;;
   clip-list)        clip_list ;;
   clip-add)         clip_add "$2" ;;
   clip-copy)        clip_copy "$2" ;;
