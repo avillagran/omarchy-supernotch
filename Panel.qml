@@ -171,6 +171,15 @@ Panel {
         label: p.label
       }
     })
+    // User-defined icon order (settings ▲▼): pluginOrder lists keys first→last;
+    // unlisted plugins keep their natural order at the end.
+    var ord = root.pluginOrder || []
+    if (ord.length) {
+      vis = vis.slice().sort(function (a, b) {
+        var ia = ord.indexOf(a.key), ib = ord.indexOf(b.key)
+        return (ia < 0 ? 9999 : ia) - (ib < 0 ? 9999 : ib)
+      })
+    }
     root.notchList = vis
   }
   function isNotch(key) {
@@ -197,6 +206,24 @@ Panel {
   function sideOf(key) {
     var s = root.notchSides || {}
     return s[key] === "left" ? "left" : "right"
+  }
+  // Move a plugin one step up/down INSIDE THE PILL order (settings ▲▼).
+  // Operates on the visible notchList so the buttons always match what the
+  // user sees; hidden plugins stay interleaved via the trailing remainder.
+  function moveInNotch(key, delta) {
+    var vis = (root.notchList || []).map(function (p) { return p.key })
+    var i = vis.indexOf(key)
+    var j = i + delta
+    if (i < 0 || j < 0 || j >= vis.length) return
+    var t = vis[i]; vis[i] = vis[j]; vis[j] = t
+    var rest = []
+    var all = root.plugins || []
+    for (var k = 0; k < all.length; k++) if (vis.indexOf(all[k].key) < 0) rest.push(all[k].key)
+    var next = vis.concat(rest)
+    root.pluginOrder = next
+    root.run(["set-order", JSON.stringify(next)], function () {})
+    root.recomputeNotch()
+    root.pushBar()
   }
   function reorderPlugin(fromKey, toIdx) {
     var all = root.plugins
