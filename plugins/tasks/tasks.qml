@@ -48,7 +48,7 @@ Item {
 
     Text {
       text: (root ? root.t(root.uiLang, "tasksLeft") : "%1 left").replace("%1", String(list.filter(function (x){ return !x.done }).length))
-      color: Color.muted; font.pixelSize: Style.font.bodySmall
+      color: Qt.darker(Color.foreground, 1.5); font.pixelSize: Style.font.bodySmall
     }
 
     Flickable {
@@ -70,15 +70,15 @@ Item {
             }
             Text {
               text: modelData.text
-              color: modelData.done ? Color.muted : Color.foreground
+              color: modelData.done ? Qt.darker(Color.foreground, 1.5) : Color.foreground
               font.pixelSize: Style.font.body; font.strikeout: modelData.done
               anchors.verticalCenter: parent.verticalCenter
               width: parent.width - Style.space(70); elide: Text.ElideRight
             }
-            Button { text: "✕"; iconText: "✕"; foreground: Color.muted; width: Style.space(24); height: Style.space(24); onClicked: if (root) root.run(["tasks-del", String(index)], function(){ load() }) }
+            Button { text: "✕"; iconText: "✕"; foreground: Qt.darker(Color.foreground, 1.5); width: Style.space(24); height: Style.space(24); onClicked: if (root) root.run(["tasks-del", String(index)], function(){ load() }) }
           }
         }
-        Text { visible: m.list.length === 0; text: root ? root.t(root.uiLang, "tasksEmpty") : ""; color: Color.muted; font.pixelSize: Style.font.body }
+        Text { visible: m.list.length === 0; text: root ? root.t(root.uiLang, "tasksEmpty") : ""; color: Qt.darker(Color.foreground, 1.5); font.pixelSize: Style.font.body }
       }
     }
   }

@@ -64,7 +64,7 @@ Item {
               anchors.centerIn: parent
               text: (modelData.sensitive ? "󰌾 " : "• ") +
                     (modelData.txt.length > 46 ? modelData.txt.slice(0, 44) + "…" : modelData.txt)
-              color: modelData.sensitive ? Color.muted : Color.foreground
+              color: modelData.sensitive ? Qt.darker(Color.foreground, 1.5) : Color.foreground
               font.family: Style.fontFamily
               font.pixelSize: Style.font.caption
               elide: Text.ElideRight; width: parent.width - Style.space(20)
@@ -87,7 +87,7 @@ Item {
           }
           Text {
             text: root.t(root.uiLang, "clipboardEmpty")
-            color: Color.muted; font.pixelSize: Style.font.caption
+            color: Qt.darker(Color.foreground, 1.5); font.pixelSize: Style.font.caption
             anchors.horizontalCenter: parent.horizontalCenter
           }
         }

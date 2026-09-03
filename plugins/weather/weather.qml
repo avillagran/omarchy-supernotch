@@ -1,64 +1,24 @@
 import QtQuick
-import QtQuick.Layouts
 import qs.Commons
 import qs.Ui
+import "Model.js" as Model
 
-// SuperNotch plugin: Weather — Apple/Xiaomi style.
-// Large condition icon + big temperature + city + condition text.
-//
-// Data source: Omarchy's REAL weather state (~/.local/state/omarchy/settings/
-// weather.json) which holds the user's configured location as name + latitude/
-// longitude. We query wttr.in with those COORDINATES (not the bare city name,
-// which wttr.in resolves to the wrong place — e.g. "Castro" → a hot sunny
-// Castro instead of the user's actual cold/rainy one). This guarantees the
-// temperature and icon reflect the real local weather. Celsius is used.
+// SuperNotch plugin: Weather — UI based on Omarchy's default weather panel.
+// Hero: big condition icon + temperature; right: location + FEELS/WIND/HUMID
+// stats; divider; 3-day forecast row.
+// Data: wttr.in via the helper (reads Omarchy's weather.json for location).
+// Icons: Model.iconForCode / Model.dayIcon from Omarchy's Model.js (Nerd Font).
 Item {
   id: m
   property var root: null
   property string pluginKey: ""
   width: parent ? parent.width : 100
-  implicitHeight: row.implicitHeight + Style.space(32)
+  implicitHeight: weatherColumn.implicitHeight + Style.space(32)
 
-  // ── wttr.in weatherCode → nerd-font glyph (mirrors Omarchy's Model.js) ──
-  function glyphForCode(code, night) {
-    var c = parseInt(String(code || "0"), 10)
-    switch (c) {
-      case 113: return night ? "" : ""
-      case 116: return night ? "" : ""
-      case 119: case 122: return ""
-      case 143: case 248: case 260: return night ? "" : ""
-      case 176: case 263: case 353: return night ? "" : ""
-      case 179: case 227: case 230: case 323: case 326: case 368: return night ? "" : ""
-      case 182: case 185: case 281: case 284: case 311: case 314:
-      case 317: case 320: case 350: case 362: case 365: case 374: case 377: return ""
-      case 200: case 386: case 389: case 392: case 395: return ""
-      case 266: case 293: case 296: case 299: case 302: case 305: case 308: case 356: case 359: return ""
-      case 329: case 332: case 335: case 338: case 371: return ""
-      default: return ""
-    }
-  }
-  // Animation kind for the rich tab (rain / snow / storm / cloud / sun / wind).
-  function kindForCode(code, windKmh) {
-    var c = parseInt(String(code || "0"), 10)
-    if (c >= 200 && c <= 395) return "storm"
-    if (c >= 176 && c <= 377) return (c >= 179 && c <= 371) ? "snow" : "rain"
-    if (c === 119 || c === 122 || c === 248 || c === 260) return "cloud"
-    if (windKmh >= 25) return "wind"
-    return "sun"
-  }
-  // Emoji fallback for places where a Nerd Font glyph may not render.
-  function emojiForCode(code, night) {
-    var c = parseInt(String(code || "0"), 10)
-    if (c >= 200 && c <= 395) return "⛈"
-    if (c >= 176 && c <= 377) return (c >= 179 && c <= 371) ? "❄" : "🌧"
-    if (c === 119 || c === 122 || c === 248 || c === 260) return "☁"
-    if (c >= 266 && c <= 359) return "🌧"
-    return night ? "🌙" : "☀"
-  }
+  function dayName(dateStr) { return Model.dayName(dateStr) }
 
   function load() {
     if (!root) return
-    // 1) read the real location (name + coords) from Omarchy's weather state
     root.run(["weather-state"], function (out) {
       var lat = "", lon = "", name = ""
       try {
@@ -69,7 +29,7 @@ Item {
       } catch (e) {}
       m.city = name
       if (lat !== "" && lon !== "") m.query = lat + "," + lon
-      else m.query = name ? name + ",Chile" : "Santiago,Chile"  // fallback for CL user
+      else m.query = name ? name + ",Chile" : "Santiago,Chile"
       fetchWeather()
     })
   }
@@ -81,23 +41,21 @@ Item {
         var cur = d.current_condition[0]
         var h = new Date().getHours()
         var isNight = (h < 7 || h >= 19)
-        m.temp = (cur.temp_C !== undefined) ? cur.temp_C + "°C" : ""
+        m.temp = (cur.temp_C !== undefined) ? cur.temp_C : ""
+        m.feels = (cur.FeelsLikeC !== undefined) ? cur.FeelsLikeC + "°" : ""
         m.code = cur.weatherCode
         m.cond = cur.weatherDesc ? cur.weatherDesc[0].value : ""
         m.humidity = cur.humidity || ""
         m.wind = cur.windspeedKmph || ""
-        m.kind = m.kindForCode(m.code, parseFloat(m.wind) || 0)
-        m.icon = m.glyphForCode(m.code, isNight)
+        m.icon = Model.iconForCode(m.code, isNight)
         var today = d.weather && d.weather[0]
         if (today) { m.maxC = today.maxtempC; m.minC = today.mintempC }
-        // next 3 days forecast (nearest noon entry)
         var fc = []
         for (var i = 1; i < Math.min(4, d.weather.length); i++) {
           var day = d.weather[i]
-          var hr = day.hourly && day.hourly.length > 12 ? day.hourly[11] : (day.hourly && day.hourly[0])
           fc.push({
-            day: day.date,
-            icon: m.glyphForCode(hr ? hr.weatherCode : day.hourly[0].weatherCode, false),
+            date: day.date,
+            icon: Model.dayIcon(day),
             maxC: day.maxtempC, minC: day.mintempC
           })
         }
@@ -107,8 +65,8 @@ Item {
     })
   }
   function pushNotch() {
-    m.notchIcon = m.icon || ""
-    m.notchText = (m.temp ? m.temp + " " : "") + (m.city || "")
+    m.notchIcon = m.icon || ""
+    m.notchText = (m.temp ? m.temp + "° " : "") + (m.city || "")
     if (root && root.updateNotchData) root.updateNotchData(pluginKey, m.notchIcon, m.notchText)
   }
   Component.onCompleted: if (root) load()
@@ -119,62 +77,182 @@ Item {
   property string city: ""
   property string icon: ""
   property string temp: ""
+  property string feels: ""
   property string cond: ""
   property string humidity: ""
   property string wind: ""
   property string code: ""
-  property string kind: "sun"
   property string maxC: ""
   property string minC: ""
   property var forecast: []
   property string query: "Santiago,Chile"
 
-  // Notch pill mini-status: weather icon + temperature + city.
   property string notchIcon: icon
-  property string notchText: (temp ? temp + " " : "") + (city || "")
+  property string notchText: (temp ? temp + "° " : "") + (city || "")
   onNotchIconChanged: if (root && root.updateNotchData) root.updateNotchData(pluginKey, notchIcon, notchText)
   onNotchTextChanged: if (root && root.updateNotchData) root.updateNotchData(pluginKey, notchIcon, notchText)
 
-  Row {
-    id: row
+  // ── UI (mirrors Omarchy weather Panel.qml) ──
+  Column {
+    id: weatherColumn
     x: Style.space(16); y: Style.space(16)
     width: parent.width - Style.space(32)
-    height: implicitHeight
-    spacing: Style.space(20)
-    anchors.centerIn: undefined
+    spacing: Style.space(14)
 
+    // Hero: big icon + temp left; location + stats right.
+    Item {
+      width: parent.width
+      height: Math.max(heroLeft.height, heroRight.height)
+
+      Row {
+        id: heroLeft
+        anchors.left: parent.left
+        anchors.leftMargin: Style.space(16)
+        anchors.verticalCenter: parent.verticalCenter
+        spacing: Style.space(16)
+
+        Text {
+          anchors.verticalCenter: parent.verticalCenter
+          anchors.verticalCenterOffset: 5
+          text: m.icon || "—"
+          color: Color.foreground
+          font.family: Style.fontFamily
+          font.pixelSize: 64
+        }
+        Row {
+          anchors.verticalCenter: parent.verticalCenter
+          spacing: Style.space(2)
+          Text {
+            id: tempBig
+            text: m.temp || "—"
+            color: Color.foreground
+            font.family: Style.fontFamily
+            font.pixelSize: 56
+            font.bold: true
+          }
+          Text {
+            text: m.temp !== "" ? "°C" : ""
+            color: Color.foreground
+            font.family: Style.fontFamily
+            font.pixelSize: Style.font.display
+            anchors.top: tempBig.top
+            anchors.topMargin: Style.space(10)
+          }
+        }
+      }
+
+      Column {
+        id: heroRight
+        width: weatherStats.implicitWidth
+        anchors.right: parent.right
+        anchors.rightMargin: Style.space(20)
+        anchors.verticalCenter: parent.verticalCenter
+        spacing: Style.space(12)
+
+        // Location row
+        Row {
+          visible: m.city !== ""
+          spacing: Style.space(6)
+          Text {
+            text: ""
+            color: Qt.darker(Color.foreground, 1.4)
+            font.family: Style.fontFamily
+            font.pixelSize: Style.font.body
+            anchors.verticalCenter: parent.verticalCenter
+          }
+          Text {
+            text: (m.city || "").toUpperCase()
+            color: Qt.darker(Color.foreground, 1.4)
+            font.family: Style.fontFamily
+            font.pixelSize: Style.font.body
+            font.letterSpacing: 1
+            anchors.verticalCenter: parent.verticalCenter
+          }
+        }
+
+        // Stats row: FEELS / WIND / HUMID
+        Row {
+          id: weatherStats
+          visible: m.temp !== ""
+          spacing: Style.space(36)
+          Column {
+            spacing: Style.space(5)
+            Text { text: "FEELS"; color: Qt.darker(Color.foreground, 1.5); font.family: Style.fontFamily; font.pixelSize: Style.font.bodySmall; font.letterSpacing: 1 }
+            Text { text: m.feels; color: Color.foreground; font.family: Style.fontFamily; font.pixelSize: Style.font.title }
+          }
+          Column {
+            spacing: Style.space(5)
+            Text { text: "WIND"; color: Qt.darker(Color.foreground, 1.5); font.family: Style.fontFamily; font.pixelSize: Style.font.bodySmall; font.letterSpacing: 1 }
+            Text { text: m.wind ? m.wind + " km/h" : ""; color: Color.foreground; font.family: Style.fontFamily; font.pixelSize: Style.font.title }
+          }
+          Column {
+            spacing: Style.space(5)
+            Text { text: "HUMID"; color: Qt.darker(Color.foreground, 1.5); font.family: Style.fontFamily; font.pixelSize: Style.font.bodySmall; font.letterSpacing: 1 }
+            Text { text: m.humidity ? m.humidity + "%" : ""; color: Color.foreground; font.family: Style.fontFamily; font.pixelSize: Style.font.title }
+          }
+        }
+      }
+    }
+
+    // "Fetching…" hint
     Text {
-      id: wIcon
-      text: m.icon || ""
-      font.pixelSize: Style.font.displayLarge
+      visible: m.temp === ""
+      text: "Fetching forecast…"
+      color: Qt.darker(Color.foreground, 1.5)
       font.family: Style.fontFamily
+      font.pixelSize: Style.font.bodySmall
+      font.italic: true
+    }
+
+    // Divider
+    Rectangle {
+      visible: m.forecast.length > 0
+      width: parent.width
+      height: Style.spacing.hairline
       color: Color.foreground
-      anchors.verticalCenter: parent.verticalCenter
+      opacity: 0.12
     }
-    Column {
-      anchors.verticalCenter: parent.verticalCenter
-      spacing: Style.space(2)
-      Text {
-        id: wTemp
-        text: m.temp || "--°"
-        color: Color.foreground
-        font.pixelSize: Style.font.displayLarge
-        font.bold: true
-        font.family: "Inter"
+
+    // Forecast row: 3 cells, each icon + day-name + hi/lo.
+    Item {
+      visible: m.forecast.length > 0
+      width: parent.width
+      height: forecastRow.height
+      Row {
+        id: forecastRow
+        anchors.horizontalCenter: parent.horizontalCenter
+        spacing: Style.space(44)
+        Repeater {
+          model: m.forecast
+          Row {
+            required property var modelData
+            spacing: Style.space(10)
+            Text {
+              anchors.verticalCenter: parent.verticalCenter
+              text: modelData.icon
+              color: Color.foreground
+              font.family: Style.fontFamily
+              font.pixelSize: Style.font.display
+            }
+            Column {
+              anchors.verticalCenter: parent.verticalCenter
+              spacing: Style.space(2)
+              Text {
+                text: m.dayName(modelData.date).toUpperCase()
+                color: Qt.darker(Color.foreground, 1.4)
+                font.family: Style.fontFamily
+                font.pixelSize: Style.font.caption
+                font.letterSpacing: 1
+              }
+              Row {
+                spacing: Style.space(6)
+                Text { text: modelData.maxC !== undefined ? modelData.maxC + "°" : ""; color: Color.foreground; font.family: Style.fontFamily; font.pixelSize: Style.font.body }
+                Text { text: modelData.minC !== undefined ? modelData.minC + "°" : ""; color: Qt.darker(Color.foreground, 1.5); font.family: Style.fontFamily; font.pixelSize: Style.font.body }
+              }
+            }
+          }
+        }
       }
-      Text {
-        id: wCity
-        text: (m.city ? m.city + "  ·  " : "") + (m.cond || "")
-        color: Color.foreground
-        font.pixelSize: Style.font.body
-      }
-    }
-    // small stats (humidity / wind) — phase 2e will expand into the rich card
-    Column {
-      anchors.verticalCenter: parent.verticalCenter
-      spacing: Style.space(2)
-      Text { text: m.humidity ? "󰖌 " + m.humidity + "%" : ""; color: Color.muted; font.family: Style.fontFamily; font.pixelSize: Style.font.bodySmall }
-      Text { text: m.wind ? "󰖝 " + m.wind + "km/h" : ""; color: Color.muted; font.family: Style.fontFamily; font.pixelSize: Style.font.bodySmall }
     }
   }
 }
