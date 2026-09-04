@@ -1,0 +1,13 @@
+{
+  "key": "monitor",
+  "icon": "󰍛",
+  "barIcon": "󰍛",
+  "label": {
+    "en": "Monitor",
+    "es": "Monitor"
+  },
+  "ui": "monitor.qml",
+  "refresh": [],
+  "order": 35,
+  "preferredHeight": 560
+}
