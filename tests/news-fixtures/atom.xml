@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Global Test</title>
+  <link href="https://example.test/global"/>
+  <updated>2026-09-04T13:00:00Z</updated>
+  <entry>
+    <title>Shared from Atom</title>
+    <id>tag:example.test,2026:shared</id>
+    <link rel="alternate" type="text/html" href="https://example.test/articles/shared?utm_medium=atom"/>
+    <updated>2026-09-04T12:45:00Z</updated>
+    <summary type="html">&lt;p&gt;Atom summary&lt;/p&gt;</summary>
+    <content type="html">&lt;p&gt;Atom full content&lt;/p&gt;</content>
+  </entry>
+  <entry>
+    <title>Atom only</title>
+    <id>tag:example.test,2026:atom-only</id>
+    <link href="https://example.test/articles/atom-only"/>
+    <published>2026-09-04T10:00:00Z</published>
+    <summary>Only Atom</summary>
+  </entry>
+</feed>
