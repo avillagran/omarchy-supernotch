@@ -63,6 +63,13 @@ test("Escape lets the active plugin go back before closing the panel", () => {
   );
 });
 
+test("number shortcuts select a tab without toggling the panel closed", () => {
+  const panel = fs.readFileSync(path.join(repoRoot, "Panel.qml"), "utf8");
+
+  assert.match(panel, /if \(idx < root\.plugins\.length\)\s*\{\s*root\.setModule\(idx\)/);
+  assert.doesNotMatch(panel, /if \(idx < root\.plugins\.length\)\s*\{\s*root\.openPlugin\(/);
+});
+
 test("plugin author documentation defines the keyboard contract", () => {
   const readme = fs.readFileSync(path.join(repoRoot, "README.md"), "utf8");
   const template = fs.readFileSync(path.join(repoRoot, "plugins/_template/hello.qml"), "utf8");
