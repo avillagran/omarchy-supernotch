@@ -1,0 +1,305 @@
+#!/usr/bin/env python3
+"""State and no-key market data backend for SuperNotch Markets."""
+
+import json
+import os
+import re
+import sys
+import time
+import uuid
+from datetime import date
+from pathlib import Path
+from urllib.error import HTTPError, URLError
+from urllib.parse import quote
+from urllib.request import Request, urlopen
+
+STATE_DIR = Path.home() / ".local" / "state" / "omarchy-supernotch"
+STATE_FILE = STATE_DIR / "markets.json"
+CACHE_DIR = STATE_DIR / "markets-cache"
+SYMBOL_RE = re.compile(r"^[A-Z0-9][A-Z0-9.^=-]{0,19}$")
+CACHE_TTL = 300
+RANGES = {"1D": ("1d", "5m"), "1W": ("5d", "15m"), "1M": ("1mo", "1d"),
+          "3M": ("3mo", "1d"), "1Y": ("1y", "1d")}
+
+
+def empty_state():
+    return {"watchlist": [], "holdings": {}}
+
+
+def load_state():
+    try:
+        data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+        if not isinstance(data.get("watchlist"), list) or not isinstance(data.get("holdings"), dict):
+            raise ValueError("invalid state")
+        return data
+    except (OSError, ValueError, json.JSONDecodeError):
+        return empty_state()
+
+
+def save_state(state):
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = STATE_FILE.with_suffix(f".tmp.{os.getpid()}")
+    tmp.write_text(json.dumps(state, separators=(",", ":")) + "\n", encoding="utf-8")
+    os.replace(tmp, STATE_FILE)
+
+
+def symbol(value):
+    value = value.strip().upper()
+    if not SYMBOL_RE.fullmatch(value):
+        raise ValueError("invalid symbol")
+    return value
+
+
+def positive_number(value, label):
+    try:
+        normalized = value.replace(",", ".") if isinstance(value, str) and "," in value and "." not in value else value
+        number = float(normalized)
+    except (TypeError, ValueError):
+        raise ValueError(f"invalid {label}") from None
+    if number <= 0 or number != number or number == float("inf"):
+        raise ValueError(f"invalid {label}")
+    return number
+
+
+def optional_date(value):
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(value).isoformat()
+    except ValueError:
+        raise ValueError("invalid purchase date") from None
+
+
+def optional_price(value):
+    return positive_number(value, "purchase price") if value else None
+
+
+def lots_for(state, ticker):
+    return state["holdings"].setdefault(ticker, [])
+
+
+def portfolio_summary(lots, current_price):
+    quantity = sum(float(lot["quantity"]) for lot in lots)
+    market_value = round(quantity * current_price, 4)
+    complete = bool(lots) and all(lot.get("price") is not None for lot in lots)
+    cost_basis = round(sum(float(lot["quantity"]) * float(lot["price"]) for lot in lots), 4) if complete else None
+    gain = round(market_value - cost_basis, 4) if cost_basis is not None else None
+    gain_pct = round(gain / cost_basis * 100, 4) if cost_basis else None
+    return {"quantity": round(quantity, 8), "marketValue": market_value,
+            "costBasis": cost_basis, "gain": gain, "gainPct": gain_pct}
+
+
+def chart_result(payload):
+    try:
+        result = payload["chart"]["result"][0]
+        if payload["chart"].get("error") or not result:
+            raise ValueError("provider returned no chart")
+        return result
+    except (KeyError, IndexError, TypeError):
+        raise ValueError("invalid Yahoo chart response") from None
+
+
+def parse_chart(payload):
+    result = chart_result(payload)
+    timestamps = result.get("timestamp") or []
+    closes = ((result.get("indicators") or {}).get("quote") or [{}])[0].get("close") or []
+    points = [{"time": int(stamp), "value": round(float(value), 6)}
+              for stamp, value in zip(timestamps, closes) if value is not None]
+    if not points:
+        raise ValueError("provider returned no prices")
+    return {"points": points}
+
+
+def parse_quote(payload):
+    result = chart_result(payload)
+    meta = result.get("meta") or {}
+    points = parse_chart(payload)["points"]
+    price = meta.get("regularMarketPrice", points[-1]["value"])
+    previous = meta.get("chartPreviousClose") or meta.get("previousClose")
+    if previous is None:
+        previous = points[0]["value"]
+    price, previous = float(price), float(previous)
+    change = price - previous
+    return {"symbol": str(meta.get("symbol") or ""), "currency": str(meta.get("currency") or ""),
+            "price": round(price, 6), "previousClose": round(previous, 6),
+            "dayChange": round(change, 6),
+            "dayChangePct": round(change / previous * 100, 4) if previous else None,
+            "marketTime": int(meta.get("regularMarketTime") or points[-1]["time"])}
+
+
+def fixture_path(ticker, provider_range):
+    directory = os.environ.get("MARKETS_FIXTURE_DIR")
+    return Path(directory) / f"markets-{ticker}-{provider_range}.json" if directory else None
+
+
+def cache_path(ticker, provider_range):
+    safe = ticker.replace("^", "_").replace("=", "_")
+    return CACHE_DIR / f"{safe}-{provider_range}.json"
+
+
+def read_json(path):
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def write_cache(path, payload):
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(f".tmp.{os.getpid()}")
+    tmp.write_text(json.dumps({"fetchedAt": int(time.time()), "payload": payload}, separators=(",", ":")), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def fetch_yahoo(ticker, provider_range, interval):
+    fixture = fixture_path(ticker, provider_range)
+    if fixture and fixture.is_file():
+        return read_json(fixture)
+    if os.environ.get("MARKETS_OFFLINE") == "1":
+        raise OSError("offline fixture mode")
+    last_error = None
+    for host in ("query1.finance.yahoo.com", "query2.finance.yahoo.com"):
+        url = (f"https://{host}/v8/finance/chart/" + quote(ticker, safe="") +
+               f"?range={provider_range}&interval={interval}&includePrePost=false&events=div%2Csplits")
+        request = Request(url, headers={"User-Agent": "Mozilla/5.0 SuperNotch/1.0", "Accept": "application/json"})
+        try:
+            with urlopen(request, timeout=12) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            parse_chart(payload)
+            return payload
+        except (HTTPError, URLError, TimeoutError, json.JSONDecodeError, ValueError) as exc:
+            last_error = exc
+    raise OSError(f"market provider unavailable: {last_error}") from last_error
+
+
+def market_payload(ticker, range_name, force=False):
+    if range_name not in RANGES:
+        raise ValueError("invalid chart range")
+    provider_range, interval = RANGES[range_name]
+    path = cache_path(ticker, provider_range)
+    cached = None
+    try:
+        cached = read_json(path)
+    except (OSError, ValueError, json.JSONDecodeError):
+        pass
+    if cached and not force and int(time.time()) - int(cached.get("fetchedAt", 0)) < CACHE_TTL:
+        return cached["payload"], False, int(cached["fetchedAt"]), ""
+    try:
+        payload = fetch_yahoo(ticker, provider_range, interval)
+        parse_chart(payload)
+        write_cache(path, payload)
+        return payload, False, int(time.time()), ""
+    except (OSError, ValueError) as exc:
+        if cached and cached.get("payload"):
+            return cached["payload"], True, int(cached.get("fetchedAt", 0)), f"Using cached data: {exc}"
+        raise
+
+
+def asset_snapshot(state, ticker, force=False):
+    try:
+        payload, stale, fetched_at, warning = market_payload(ticker, "1W", force)
+        quote_data = parse_quote(payload)
+        chart_data = parse_chart(payload)
+        result = {**quote_data, "sparkline": [point["value"] for point in chart_data["points"]],
+                  "stale": stale, "updatedAt": fetched_at}
+        result.update(portfolio_summary(state["holdings"].get(ticker, []), quote_data["price"]))
+        if warning:
+            result["warning"] = warning
+        return result
+    except (OSError, ValueError) as exc:
+        return {"symbol": ticker, "error": str(exc), "stale": False,
+                **portfolio_summary(state["holdings"].get(ticker, []), 0)}
+
+
+def emit(value):
+    print(json.dumps(value, separators=(",", ":")))
+
+
+def main(argv):
+    command = argv[0] if argv else "state"
+    state = load_state()
+    if command == "state":
+        emit(state)
+    elif command == "add-symbol":
+        ticker = symbol(argv[1] if len(argv) > 1 else "")
+        if ticker not in state["watchlist"]:
+            state["watchlist"].append(ticker)
+            save_state(state)
+        emit(state)
+    elif command == "reorder":
+        ticker = symbol(argv[1])
+        delta = int(argv[2])
+        if ticker not in state["watchlist"]:
+            raise ValueError("symbol not found")
+        current = state["watchlist"].index(ticker)
+        target = max(0, min(len(state["watchlist"]) - 1, current + delta))
+        if target != current:
+            state["watchlist"].insert(target, state["watchlist"].pop(current))
+            save_state(state)
+        emit(state)
+    elif command == "add-lot":
+        ticker = symbol(argv[1])
+        lot = {"id": uuid.uuid4().hex[:12], "quantity": positive_number(argv[2], "quantity"),
+               "date": optional_date(argv[3]), "price": optional_price(argv[4])}
+        if ticker not in state["watchlist"]:
+            state["watchlist"].append(ticker)
+        lots_for(state, ticker).append(lot)
+        save_state(state)
+        emit(state)
+    elif command == "edit-lot":
+        ticker, lot_id = symbol(argv[1]), argv[2]
+        lots = lots_for(state, ticker)
+        lot = next((item for item in lots if item.get("id") == lot_id), None)
+        if lot is None:
+            raise ValueError("lot not found")
+        lot.update({"quantity": positive_number(argv[3], "quantity"),
+                    "date": optional_date(argv[4]), "price": optional_price(argv[5])})
+        save_state(state)
+        emit(state)
+    elif command == "remove-lot":
+        ticker, lot_id = symbol(argv[1]), argv[2]
+        lots = lots_for(state, ticker)
+        next_lots = [lot for lot in lots if lot.get("id") != lot_id]
+        if len(next_lots) == len(lots):
+            raise ValueError("lot not found")
+        if next_lots:
+            state["holdings"][ticker] = next_lots
+        else:
+            state["holdings"].pop(ticker, None)
+        save_state(state)
+        emit(state)
+    elif command == "remove-symbol":
+        ticker = symbol(argv[1])
+        if state["holdings"].get(ticker) and (len(argv) < 3 or argv[2] != "confirm"):
+            raise ValueError("confirmation required for symbol with holdings")
+        state["watchlist"] = [item for item in state["watchlist"] if item != ticker]
+        state["holdings"].pop(ticker, None)
+        save_state(state)
+        emit(state)
+    elif command == "summary":
+        ticker = symbol(argv[1])
+        emit(portfolio_summary(state["holdings"].get(ticker, []), positive_number(argv[2], "current price")))
+    elif command == "parse-quote":
+        emit(parse_quote(read_json(Path(argv[1]))))
+    elif command == "parse-chart":
+        emit(parse_chart(read_json(Path(argv[1]))))
+    elif command == "refresh":
+        force = "--force" in argv[1:]
+        assets = [asset_snapshot(state, ticker, force) for ticker in state["watchlist"]]
+        emit({"assets": assets, "watchlist": state["watchlist"], "holdings": state["holdings"]})
+    elif command == "chart":
+        ticker, range_name = symbol(argv[1]), argv[2].upper()
+        payload, stale, fetched_at, warning = market_payload(ticker, range_name, "--force" in argv[3:])
+        result = parse_chart(payload)
+        result.update({"symbol": ticker, "range": range_name, "currency": parse_quote(payload)["currency"],
+                       "stale": stale, "updatedAt": fetched_at})
+        if warning:
+            result["warning"] = warning
+        emit(result)
+    else:
+        raise ValueError(f"unknown command: {command}")
+
+
+if __name__ == "__main__":
+    try:
+        main(sys.argv[1:])
+    except (ValueError, IndexError) as exc:
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(2)

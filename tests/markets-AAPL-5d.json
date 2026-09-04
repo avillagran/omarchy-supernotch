@@ -1,0 +1,17 @@
+{
+  "chart": {
+    "result": [{
+      "meta": {
+        "symbol": "AAPL",
+        "currency": "USD",
+        "exchangeName": "NMS",
+        "regularMarketPrice": 189.25,
+        "chartPreviousClose": 187.5,
+        "regularMarketTime": 1757000000
+      },
+      "timestamp": [1756998200, 1756999100, 1757000000],
+      "indicators": {"quote": [{"close": [188.0, null, 189.25]}]}
+    }],
+    "error": null
+  }
+}

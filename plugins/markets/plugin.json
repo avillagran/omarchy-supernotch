@@ -1,0 +1,13 @@
+{
+  "key": "markets",
+  "icon": "󰄪",
+  "barIcon": "󰄪",
+  "label": {
+    "en": "Markets",
+    "es": "Mercados"
+  },
+  "ui": "markets.qml",
+  "refresh": ["refresh"],
+  "order": 35,
+  "preferredHeight": 560
+}
