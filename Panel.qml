@@ -370,7 +370,7 @@ Panel {
         // digit 1-9 jumps straight to that tab
         if (t >= "1" && t <= "9") {
           var idx = parseInt(t, 10) - 1
-          if (idx < root.plugins.length) { root.openPlugin(root.plugins[idx].key); root.focusSection = "tabs" }
+          if (idx < root.plugins.length) { root.setModule(idx); root.focusSection = "tabs" }
           return
         }
         if (root.focusSection === "content") root.dispatchKeyboardAction("text", { text: t })
