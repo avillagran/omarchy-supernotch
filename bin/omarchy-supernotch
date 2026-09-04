@@ -105,6 +105,18 @@ list_plugins() {
   jq -sc 'sort_by(.order // 99)' "$tmp" 2>/dev/null || echo '[]'
   rm -f "$tmp"
 }
+
+# Run a plugin-owned backend without growing this shared dispatcher for every
+# module. Keys are deliberately restricted so callers cannot escape PLUGINS_DIR.
+plugin_exec() {
+  local key="${1:-}"
+  [ -n "$key" ] || { echo "plugin key required" >&2; return 2; }
+  case "$key" in *[!a-z0-9_-]*) echo "invalid plugin key: $key" >&2; return 2 ;; esac
+  shift
+  local backend="$PLUGINS_DIR/$key/backend"
+  [ -x "$backend" ] || { echo "plugin backend not found: $key" >&2; return 1; }
+  "$backend" "$@"
+}
 default_prefs() { echo '{"notchWidth":20,"panelWidth":70,"notchHeight":420,"notchBarWidth":0,"autoHide":true,"clipMask":true,"realNotch":false,"bg":"aurora","bgBlur":0,"bgOpacity":1.0,"notchInset":0,"notchPlugins":[],"pluginOrder":[],"notchSides":{}}'; }
 read_prefs() {
   local raw; raw=$(read_file_safe "$PREFS")
@@ -415,6 +427,7 @@ case "${1:-}" in
   set-pref)         write_pref "$2" "$3" ;;
   notch-detect)     notch_detect ;;
   plugins-list)     list_plugins ;;
+  plugin-exec)      shift; plugin_exec "$@" ;;
   weather-status)  omarchy-weather-status ;;
   weather-icon)    omarchy-weather-icon ;;
   weather-location) omarchy-weather-location ;;
