@@ -1,0 +1,188 @@
+#!/bin/bash
+set -u
+export LC_ALL=C LANG=C
+
+PROC_ROOT="${MONITOR_PROC_ROOT:-/proc}"
+STATE_DIR="${MONITOR_STATE_DIR:-${XDG_RUNTIME_DIR:-/tmp}/omarchy-supernotch-monitor-${UID}}"
+STATE_FILE="$STATE_DIR/sample.tsv"
+
+fail() {
+  printf '%s\n' "$*" >&2
+  exit 1
+}
+
+is_uint() {
+  [[ $1 =~ ^[0-9]+$ ]]
+}
+
+json_escape() {
+  local text=$1
+  text=${text//\\/\\\\}
+  text=${text//\"/\\\"}
+  text=${text//$'\n'/\\n}
+  text=${text//$'\t'/\\t}
+  text=${text//$'\r'/\\r}
+  printf '%s' "$text"
+}
+
+read_proc_stat() {
+  local file=$1 line rest name
+  [[ -r $file ]] || return 1
+  IFS= read -r line < "$file" || return 1
+  name=${line#*(}
+  name=${name%)*}
+  rest=${line##*) }
+  set -- $rest
+  (( $# >= 20 )) || return 1
+  printf '%s\t%s\t%s\t%s\n' "$name" "$(( ${12} + ${13} ))" "${20}" "${1}"
+}
+
+number() {
+  awk -v n="${1:-0}" 'BEGIN { printf "%.1f", n + 0 }'
+}
+
+snapshot() {
+  local sort_key=${1:-cpu} filter=${2:-} cpu_line total=0 idle=0 cores=0 value
+  local prev_total=0 prev_idle=0 total_delta=0 cpu_pct=0 mem_total=0 mem_available=0 mem_used=0 mem_pct=0
+  local load1=0 load5=0 load15=0 uptime=0 rows current tmp pid info name ticks start state rss ram cpu lower_filter
+  declare -A old_ticks old_start
+
+  case $sort_key in cpu|ram|pid|name) ;; *) sort_key=cpu ;; esac
+  mkdir -p "$STATE_DIR" || fail "cannot create monitor state directory"
+  if [[ -r $STATE_FILE ]]; then
+    while IFS=$'\t' read -r state pid start ticks; do
+      if [[ $state == SYSTEM ]]; then prev_total=$pid; prev_idle=$start
+      elif [[ $state == PROCESS ]]; then old_start[$pid]=$start; old_ticks[$pid]=$ticks
+      fi
+    done < "$STATE_FILE"
+  fi
+
+  IFS= read -r cpu_line < "$PROC_ROOT/stat" || fail "cannot read proc stat"
+  set -- $cpu_line
+  shift
+  for value in "$@"; do total=$((total + value)); done
+  idle=$((${4:-0} + ${5:-0}))
+  cores=$(awk '$1 ~ /^cpu[0-9]+$/ { n++ } END { print n + 0 }' "$PROC_ROOT/stat")
+  (( cores > 0 )) || cores=1
+  total_delta=$((total - prev_total))
+  if (( prev_total > 0 && total_delta > 0 )); then
+    cpu_pct=$(awk -v d="$total_delta" -v i="$((idle - prev_idle))" 'BEGIN { p=(d-i)*100/d; if(p<0)p=0;if(p>100)p=100;printf "%.1f",p }')
+  fi
+
+  mem_total=$(awk '$1=="MemTotal:" {print $2}' "$PROC_ROOT/meminfo")
+  mem_available=$(awk '$1=="MemAvailable:" {print $2}' "$PROC_ROOT/meminfo")
+  mem_total=${mem_total:-0}; mem_available=${mem_available:-0}; mem_used=$((mem_total - mem_available))
+  (( mem_used < 0 )) && mem_used=0
+  if (( mem_total > 0 )); then mem_pct=$(awk -v u="$mem_used" -v t="$mem_total" 'BEGIN {printf "%.1f",u*100/t}'); fi
+  read -r load1 load5 load15 _ < "$PROC_ROOT/loadavg" || true
+  read -r uptime _ < "$PROC_ROOT/uptime" || true
+  uptime=${uptime%%.*}; uptime=${uptime:-0}
+
+  rows=$(mktemp) || fail "cannot create temporary file"
+  current=$(mktemp) || { rm -f "$rows"; fail "cannot create temporary file"; }
+  printf 'SYSTEM\t%s\t%s\t0\n' "$total" "$idle" > "$current"
+  lower_filter=$(printf '%s' "$filter" | tr '[:upper:]' '[:lower:]')
+
+  for state in "$PROC_ROOT"/[0-9]*; do
+    [[ -d $state ]] || continue
+    pid=${state##*/}
+    info=$(read_proc_stat "$state/stat") || continue
+    IFS=$'\t' read -r name ticks start _ <<< "$info"
+    rss=$(awk '$1=="VmRSS:" {print $2; found=1; exit} END {if(!found) print 0}' "$state/status" 2>/dev/null)
+    rss=${rss:-0}
+    ram=0
+    if (( mem_total > 0 )); then ram=$(awk -v r="$rss" -v t="$mem_total" 'BEGIN {printf "%.1f",r*100/t}'); fi
+    cpu=0
+    if (( total_delta > 0 )) && [[ ${old_start[$pid]:-} == "$start" ]]; then
+      cpu=$(awk -v d="$((ticks - ${old_ticks[$pid]:-ticks}))" -v t="$total_delta" -v c="$cores" 'BEGIN {p=d*100*c/t;if(p<0)p=0;printf "%.1f",p}')
+    fi
+    printf 'PROCESS\t%s\t%s\t%s\n' "$pid" "$start" "$ticks" >> "$current"
+    if [[ -n $lower_filter ]] && [[ $(printf '%s' "$name" | tr '[:upper:]' '[:lower:]') != *"$lower_filter"* ]] && [[ $pid != *"$lower_filter"* ]]; then
+      continue
+    fi
+    printf '%s\t%s\t%s\t%s\t%s\n' "$pid" "$name" "$cpu" "$ram" "$rss" >> "$rows"
+  done
+  mv -f "$current" "$STATE_FILE"
+
+  case $sort_key in
+    cpu) sort -t $'\t' -k3,3nr -k1,1n "$rows" -o "$rows" ;;
+    ram) sort -t $'\t' -k4,4nr -k1,1n "$rows" -o "$rows" ;;
+    name) sort -f -t $'\t' -k2,2 -k1,1n "$rows" -o "$rows" ;;
+    pid) sort -t $'\t' -k1,1n "$rows" -o "$rows" ;;
+  esac
+
+  printf '{"cpuPercent":%s,"memory":{"totalKb":%s,"usedKb":%s,"availableKb":%s,"percent":%s},"load":[%s,%s,%s],"uptimeSeconds":%s,"processes":[' \
+    "$cpu_pct" "$mem_total" "$mem_used" "$mem_available" "$mem_pct" "${load1:-0}" "${load5:-0}" "${load15:-0}" "$uptime"
+  local first=1
+  while IFS=$'\t' read -r pid name cpu ram rss; do
+    (( first )) || printf ','
+    first=0
+    printf '{"pid":%s,"name":"' "$pid"; json_escape "$name"
+    printf '","cpu":%s,"ram":%s,"rssKb":%s}' "$cpu" "$ram" "$rss"
+  done < "$rows"
+  printf ']}\n'
+  rm -f "$rows"
+}
+
+detail() {
+  local pid=${1:-} dir info name ticks start proc_state command rss threads uid
+  is_uint "$pid" || fail "invalid pid"
+  dir="$PROC_ROOT/$pid"
+  [[ -d $dir ]] || fail "process not found"
+  info=$(read_proc_stat "$dir/stat") || fail "cannot read process stat"
+  IFS=$'\t' read -r name ticks start proc_state <<< "$info"
+  proc_state=$(awk -F '\t' '$1=="State:" {sub(/^State:[ \t]*/, ""); print; exit}' "$dir/status")
+  rss=$(awk '$1=="VmRSS:" {print $2; exit}' "$dir/status"); rss=${rss:-0}
+  threads=$(awk '$1=="Threads:" {print $2; exit}' "$dir/status"); threads=${threads:-0}
+  uid=$(awk '$1=="Uid:" {print $2; exit}' "$dir/status"); uid=${uid:-0}
+  command=$(tr '\0' ' ' < "$dir/cmdline" 2>/dev/null); command=${command% }
+  [[ -n $command ]] || command="[$name]"
+  printf '{"pid":%s,"name":"' "$pid"; json_escape "$name"
+  printf '","command":"'; json_escape "$command"
+  printf '","state":"'; json_escape "$proc_state"
+  printf '","rssKb":%s,"threads":%s,"uid":%s,"startTicks":%s}\n' "$rss" "$threads" "$uid" "$start"
+}
+
+protected_name() {
+  local name=${1,,}
+  case $name in
+    init|systemd|systemd-*|kernel*|kthreadd|hyprland|quickshell|omarchy-super*|backend|bash|zsh|fish|sh|dash|sudo|doas|sshd) return 0 ;;
+  esac
+  return 1
+}
+
+kill_process() {
+  local pid=${1:-} signal=${2:-TERM} info name ticks start state ancestor parent command
+  is_uint "$pid" || fail "invalid pid"
+  (( pid > 1 )) || fail "protected pid"
+  [[ $signal == TERM || $signal == KILL ]] || fail "invalid signal"
+  [[ -d $PROC_ROOT/$pid ]] || fail "process not found"
+  info=$(read_proc_stat "$PROC_ROOT/$pid/stat") || fail "cannot read process stat"
+  IFS=$'\t' read -r name ticks start state <<< "$info"
+  protected_name "$name" && fail "protected process"
+  command=$(tr '\0' ' ' < "$PROC_ROOT/$pid/cmdline" 2>/dev/null)
+  case $command in *omarchy-supernotch*|*plugins/monitor/backend*) fail "protected helper process" ;; esac
+  [[ $pid != "$$" && $pid != "$PPID" ]] || fail "protected helper process"
+
+  ancestor=$PPID
+  while is_uint "$ancestor" && (( ancestor > 1 )); do
+    [[ $pid != "$ancestor" ]] || fail "protected ancestor process"
+    parent=$(awk '$1=="PPid:" {print $2; exit}' "/proc/$ancestor/status" 2>/dev/null)
+    [[ -n $parent && $parent != "$ancestor" ]] || break
+    ancestor=$parent
+  done
+
+  if [[ ${MONITOR_KILL_DRY_RUN:-0} == 1 ]]; then
+    printf '{"ok":true,"pid":%s,"signal":"%s","dryRun":true}\n' "$pid" "$signal"
+    return
+  fi
+  kill "-$signal" "$pid" || fail "signal failed"
+  printf '{"ok":true,"pid":%s,"signal":"%s","dryRun":false}\n' "$pid" "$signal"
+}
+
+case ${1:-} in
+  snapshot) snapshot "${2:-cpu}" "${3:-}" ;;
+  detail) detail "${2:-}" ;;
+  kill) kill_process "${2:-}" "${3:-TERM}" ;;
+  *) fail "usage: backend snapshot [cpu|ram|pid|name] [filter] | detail PID | kill PID TERM|KILL" ;;
+esac
