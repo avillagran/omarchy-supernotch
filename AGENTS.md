@@ -22,6 +22,6 @@ User settings are stored in `~/.local/state/omarchy-supernotch/prefs.json`. Do n
 
 The card uses `WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive` while open so the compositor routes all keys to `PanelKeyCatcher`. Closing the panel releases focus.
 
-## Icons
+## Icons and typography
 
-Pill icons should render with `font.family: "monospace"` and use characters/glyphs that the user's configured monospace font (FiraCode Nerd Font on this machine) can draw. Prefer emojis or common Unicode symbols over private Nerd-Font code points when rendering is uncertain.
+Render plugin text and glyphs with `font.family: Style.fontFamily` so SuperNotch follows the font configured by Omarchy. Prefer glyphs the configured font can draw; do not hardcode another font family.

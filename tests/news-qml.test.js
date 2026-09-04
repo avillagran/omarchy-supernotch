@@ -17,11 +17,40 @@ test("News QML implements the panel keyboard contract", () => {
   assert.match(qml, /action === "activate"/);
   assert.match(qml, /action === "delete"/);
   assert.match(qml, /action === "text"/);
+  assert.match(qml, /action === "back"[^\n]*goBack\(\)/);
   assert.match(qml, /payload\.text === "j"/);
   assert.match(qml, /payload\.text === "k"/);
   assert.match(qml, /payload\.text === "h"/);
   assert.match(qml, /payload\.text === "l"/);
   assert.match(qml, /payload\.text === "x"/);
+});
+
+test("reader scrolls vertically by keyboard while horizontal keys choose actions", () => {
+  const qml = source();
+  assert.match(qml, /screen === "reader"[\s\S]*if \(dy\)[\s\S]*readerScroll\.scrollBy\([\s\S]*else if \(dx\)[\s\S]*readerAction/);
+  assert.match(qml, /id:\s*readerKeyScroll[\s\S]*property:\s*"contentY"[\s\S]*Easing\.OutCubic/);
+});
+
+test("reader exposes original links only for cached built-in articles and opens by id", () => {
+  const qml = source();
+  assert.match(qml, /function canOpenExternal\(article\)/);
+  assert.match(qml, /function readerActions\(\)/);
+  assert.match(qml, /exec\(\["open", article\.id\]/);
+  assert.doesNotMatch(qml, /exec\(\["open", article\.link\]/);
+});
+
+test("source chips scroll horizontally and reveal the keyboard-selected source", () => {
+  const qml = source();
+  assert.match(qml, /Flickable\s*\{\s*id:\s*sourceStrip[\s\S]*contentWidth:\s*sourceChips\.width[\s\S]*clip:\s*true/);
+  assert.match(qml, /id:\s*sourceChips[\s\S]*width:\s*implicitWidth/);
+  assert.match(qml, /function revealSelectedSource\(\)[\s\S]*sourceStrip/);
+  assert.doesNotMatch(qml, /sources\.filter[\s\S]{0,100}\.slice\(0,\s*7\)/);
+});
+
+test("article viewport reserves the footer and shows complete rows", () => {
+  const qml = source();
+  assert.match(qml, /height:\s*parent\.height\s*-\s*Style\.space\(screen === "articles" \? 106 : 68\)/);
+  assert.match(qml, /id:\s*articleList[\s\S]*height:\s*Style\.space\(70\)/);
 });
 
 test("News QML routes every backend operation through plugin-exec", () => {
@@ -59,4 +88,10 @@ test("News text fields release panel interception only while focused", () => {
   const qml = source();
   assert.match(qml, /property bool keyboardNavigationBlocked:\s*addUrlField\.activeFocus\s*\|\|\s*addNameField\.activeFocus\s*\|\|\s*filterField\.activeFocus/);
   assert.match(qml, /Keys\.onEscapePressed:/);
+});
+
+test("News animates list, reader, sources, add and confirmation screens", () => {
+  const qml = source();
+  assert.ok((qml.match(/Behavior on opacity/g) || []).length >= 5);
+  assert.ok((qml.match(/Behavior on scale/g) || []).length >= 5);
 });

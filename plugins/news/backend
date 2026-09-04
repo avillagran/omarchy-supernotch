@@ -8,15 +8,18 @@ import datetime as dt
 import email.utils
 import hashlib
 import html.parser
+import http.client
+import ipaddress
 import json
 import os
 import pathlib
 import re
+import socket
+import ssl
 import subprocess
 import sys
 import tempfile
 import urllib.parse
-import urllib.request
 import xml.etree.ElementTree as ET
 
 MAX_DOWNLOAD = 2 * 1024 * 1024
@@ -27,6 +30,7 @@ CONFIG_FILE = STATE_DIR / "news.json"
 CACHE_FILE = STATE_DIR / "news-cache.json"
 
 BUILTINS = [
+    {"id": "omarchy", "name": "Omarchy", "url": "https://github.com/basecamp/omarchy/releases.atom", "language": "global"},
     {"id": "bbc-mundo", "name": "BBC News Mundo", "url": "https://www.bbc.co.uk/mundo/index.xml", "language": "es"},
     {"id": "dw-es", "name": "DW Español · Portada", "url": "https://rss.dw.com/rdf/rss-sp-top", "language": "es"},
     {"id": "elpais", "name": "EL PAÍS", "url": "https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/portada", "language": "es"},
@@ -34,6 +38,7 @@ BUILTINS = [
     {"id": "bbc-world", "name": "BBC News · World", "url": "https://feeds.bbci.co.uk/news/world/rss.xml", "language": "global"},
     {"id": "guardian-world", "name": "The Guardian · World", "url": "https://www.theguardian.com/world/rss", "language": "global"},
 ]
+TRUSTED_ARTICLE_DOMAINS = ("github.com", "bbc.com", "bbc.co.uk", "dw.com", "elpais.com", "theguardian.com")
 TRACKING_KEYS = {"fbclid", "gclid", "mc_cid", "mc_eid"}
 
 
@@ -96,7 +101,80 @@ def valid_url(value: str) -> str:
         fail("credentials are not allowed in URLs")
     if any(ord(ch) < 32 for ch in value):
         fail("control characters are not allowed in URLs")
+    hostname = parsed.hostname.rstrip(".").lower()
+    if hostname == "localhost" or hostname.endswith(".localhost"):
+        fail("private network URLs are not allowed")
+    try:
+        address = ipaddress.ip_address(hostname)
+    except ValueError:
+        address = None
+    if address is not None and not address.is_global:
+        fail("private network URLs are not allowed")
     return urllib.parse.urlunsplit(parsed)
+
+
+def resolve_public_targets(value: str) -> tuple[str, list[tuple]]:
+    url = valid_url(value)
+    parsed = urllib.parse.urlsplit(url)
+    hostname = parsed.hostname.rstrip(".").lower()
+    try:
+        records = socket.getaddrinfo(hostname, parsed.port or (443 if parsed.scheme == "https" else 80), type=socket.SOCK_STREAM)
+    except socket.gaierror as exc:
+        raise ValueError("feed host could not be resolved") from exc
+    if not records:
+        raise ValueError("feed host could not be resolved")
+    targets = []
+    seen = set()
+    for record in records:
+        address = ipaddress.ip_address(record[4][0].split("%", 1)[0])
+        if not address.is_global:
+            raise ValueError("private network URLs are not allowed")
+        identity = (record[0], record[1], record[2], record[4])
+        if identity not in seen:
+            seen.add(identity)
+            targets.append(record)
+    if not targets:
+        raise ValueError("feed host could not be resolved")
+    return url, targets
+
+
+def ensure_public_url(value: str) -> str:
+    return resolve_public_targets(value)[0]
+
+
+def connected_socket(target: tuple, timeout: int):
+    family, socktype, proto, _, sockaddr = target
+    sock = socket.socket(family, socktype, proto)
+    try:
+        sock.settimeout(timeout)
+        sock.connect(sockaddr)
+        return sock
+    except Exception:
+        sock.close()
+        raise
+
+
+class PinnedHTTPConnection(http.client.HTTPConnection):
+    def __init__(self, hostname: str, port: int, target: tuple):
+        super().__init__(hostname, port, timeout=NETWORK_TIMEOUT)
+        self._target = target
+
+    def connect(self):
+        self.sock = connected_socket(self._target, self.timeout)
+
+
+class PinnedHTTPSConnection(http.client.HTTPSConnection):
+    def __init__(self, hostname: str, port: int, target: tuple):
+        super().__init__(hostname, port, timeout=NETWORK_TIMEOUT, context=ssl.create_default_context())
+        self._target = target
+
+    def connect(self):
+        sock = connected_socket(self._target, self.timeout)
+        try:
+            self.sock = self._context.wrap_socket(sock, server_hostname=self.host)
+        except Exception:
+            sock.close()
+            raise
 
 
 def canonical_url(value: str) -> str:
@@ -263,17 +341,53 @@ def parse_feed(data: bytes, source_id: str, source_name: str, feed_url: str) -> 
 
 
 def download(url: str) -> bytes:
-    url = valid_url(url)
-    request = urllib.request.Request(url, headers={"User-Agent": "Omarchy-SuperNotch-News/1.0", "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml;q=0.9"})
-    with urllib.request.urlopen(request, timeout=NETWORK_TIMEOUT) as response:
-        valid_url(response.geturl())
-        length = response.headers.get("Content-Length")
-        if length and int(length) > MAX_DOWNLOAD:
-            fail("feed exceeds 2 MiB limit")
-        data = response.read(MAX_DOWNLOAD + 1)
-    if len(data) > MAX_DOWNLOAD:
-        fail("feed exceeds 2 MiB limit")
-    return data
+    current_url = url
+    headers = {
+        "User-Agent": "Omarchy-SuperNotch-News/1.0",
+        "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml;q=0.9",
+    }
+    for redirect_count in range(6):
+        current_url, targets = resolve_public_targets(current_url)
+        parsed = urllib.parse.urlsplit(current_url)
+        hostname = parsed.hostname.rstrip(".").lower()
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        path = urllib.parse.urlunsplit(("", "", parsed.path or "/", parsed.query, ""))
+        last_error = None
+        redirected_to = None
+        for target in targets:
+            connection_class = PinnedHTTPSConnection if parsed.scheme == "https" else PinnedHTTPConnection
+            connection = connection_class(hostname, port, target)
+            try:
+                connection.request("GET", path, headers=headers)
+                response = connection.getresponse()
+                if response.status in (301, 302, 303, 307, 308):
+                    location = response.getheader("Location")
+                    if not location:
+                        raise ValueError("redirect has no location")
+                    if redirect_count >= 5:
+                        raise ValueError("too many feed redirects")
+                    redirected_to = urllib.parse.urljoin(current_url, location)
+                    break
+                if response.status < 200 or response.status >= 300:
+                    raise ValueError(f"feed returned HTTP {response.status}")
+                length = response.getheader("Content-Length")
+                if length and int(length) > MAX_DOWNLOAD:
+                    raise ValueError("feed exceeds 2 MiB limit")
+                data = response.read(MAX_DOWNLOAD + 1)
+                if len(data) > MAX_DOWNLOAD:
+                    raise ValueError("feed exceeds 2 MiB limit")
+                return data
+            except (OSError, ssl.SSLError, http.client.HTTPException) as exc:
+                last_error = exc
+            finally:
+                connection.close()
+        if redirected_to is not None:
+            current_url = redirected_to
+            continue
+        if last_error is not None:
+            raise ValueError("feed connection failed") from last_error
+        raise ValueError("feed download failed")
+    raise ValueError("too many feed redirects")
 
 
 def cache() -> dict:
@@ -310,6 +424,22 @@ def merged_articles(cfg: dict | None = None, cached: dict | None = None) -> list
     for article in result:
         article["unread"] = article.get("id") not in read
     return result[:1000]
+
+
+def trusted_article_url(article_id_value: str) -> str:
+    article = next((item for item in merged_articles() if item.get("id") == article_id_value), None)
+    if article is None:
+        fail("unknown article")
+    builtin_ids = {source["id"] for source in BUILTINS}
+    if article.get("sourceId") not in builtin_ids:
+        fail("external opening is limited to built-in sources")
+    url = valid_url(article.get("link", ""))
+    parsed = urllib.parse.urlsplit(url)
+    hostname = parsed.hostname.rstrip(".").lower()
+    trusted = any(hostname == domain or hostname.endswith("." + domain) for domain in TRUSTED_ARTICLE_DOMAINS)
+    if parsed.scheme != "https" or not trusted:
+        fail("untrusted article URL")
+    return url
 
 
 def add_source(url: str, name: str = "") -> dict:
@@ -403,11 +533,12 @@ def main(argv: list[str]) -> None:
         save_config(cfg)
         print(json.dumps({"id": article_id_value, "unread": argv[2] == "unread"}))
     elif command == "open" and len(argv) == 2:
-        url = valid_url(argv[1])
-        subprocess.Popen(["xdg-open", url], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
-        print("{}")
+        url = trusted_article_url(argv[1])
+        if os.environ.get("NEWS_OPEN_DRY_RUN") != "1":
+            subprocess.Popen(["xdg-open", url], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        print(json.dumps({"url": url}))
     elif command == "validate-url" and len(argv) == 2:
-        valid_url(argv[1])
+        ensure_public_url(argv[1])
         print("{}")
     elif command == "parse-file" and len(argv) == 5:
         require_fixture_mode()

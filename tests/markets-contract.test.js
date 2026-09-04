@@ -41,7 +41,7 @@ test("Markets exposes list detail form and confirmation keyboard modes", () => {
   assert.match(source, /function confirmRemoval/);
   assert.match(source, /detailSelection\s*>=\s*7[\s\S]*?requestRemoval\("lot"/);
   assert.match(source, /mode\s*=\s*"confirm"/);
-  assert.match(source, /visible:\s*m\.mode\s*===\s*"confirm"/);
+  assert.match(source, /opacity:\s*m\.mode\s*===\s*"confirm"\s*\?\s*1\s*:\s*0/);
 });
 
 test("keyboard blocking is tied only to actual TextField focus", () => {
@@ -54,6 +54,19 @@ test("keyboard blocking is tied only to actual TextField focus", () => {
   assert.match(declaration[1], /priceField\.activeFocus/);
   assert.doesNotMatch(declaration[1], /mode|loading|confirm/);
   assert.match(source, /Keys\.onEscapePressed:\s*function/);
+});
+
+test("Markets asset input searches names and exposes keyboard-selectable results", () => {
+  const source = qml();
+  assert.match(source, /id:\s*searchTimer[\s\S]*interval:\s*\d+[\s\S]*onTriggered:\s*m\.searchAssets\(\)/);
+  assert.match(source, /exec\(\["search",\s*query\]/);
+  assert.match(source, /property var searchResults:/);
+  assert.match(source, /property int searchSelection:/);
+  assert.match(source, /Keys\.onDownPressed:[^\n]*moveSearchSelection\(1\)/);
+  assert.match(source, /Keys\.onUpPressed:[^\n]*moveSearchSelection\(-1\)/);
+  assert.match(source, /onAccepted:\s*\{\s*if \(m\.searchResults\.length > 0\) m\.chooseSearchResult\(m\.searchSelection\); else m\.searchAssets\(\)\s*\}/);
+  assert.match(source, /function chooseSearchResult\(/);
+  assert.match(source, /onClicked:\s*m\.chooseSearchResult\(index\)/);
 });
 
 test("rows, detail ranges, forms and destructive confirmations have mouse parity", () => {
@@ -85,4 +98,20 @@ test("the UI labels the unofficial provider and backend has query1/query2 fallba
   assert.match(source, /unofficial|best.?effort/i);
   assert.match(backend, /query1\.finance\.yahoo\.com/);
   assert.match(backend, /query2\.finance\.yahoo\.com/);
+});
+
+test("Markets animates every screen transition", () => {
+  const source = qml();
+  assert.ok((source.match(/Behavior on opacity/g) || []).length >= 4);
+  assert.ok((source.match(/Behavior on scale/g) || []).length >= 4);
+});
+
+test("keyboard selection scrolls asset and lot rows into view", () => {
+  const source = qml();
+  assert.match(source, /id:\s*assetScroll[\s\S]*id:\s*assetScrollAnim[\s\S]*property:\s*"contentY"/);
+  assert.match(source, /id:\s*lotScroll[\s\S]*id:\s*lotScrollAnim[\s\S]*property:\s*"contentY"/);
+  assert.match(source, /function revealAssetSelection\(\)[\s\S]*assetScrollAnim\.start\(\)/);
+  assert.match(source, /function revealLotSelection\(\)[\s\S]*lotScrollAnim\.start\(\)/);
+  assert.match(source, /function moveListSelection[\s\S]*revealAssetSelection\(\)/);
+  assert.match(source, /function moveDetailSelection[\s\S]*revealLotSelection\(\)/);
 });

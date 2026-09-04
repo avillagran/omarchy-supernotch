@@ -346,6 +346,10 @@ Panel {
       id: keyCatcher
       anchors.fill: parent
       blocked: KeyboardNavigation.isBlocked(root.activePluginItem)
+      onBlockedChanged: {
+        if (!blocked && root.opened)
+          keyCatcher.forceActiveFocus()
+      }
       onCloseRequested: {
         if (root.focusSection === "content" && root.dispatchKeyboardAction("back", {}))
           return

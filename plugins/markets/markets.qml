@@ -17,6 +17,10 @@ Item {
   property string errorMessage: ""
   property var assets: []
   property var holdings: ({})
+  property var searchResults: []
+  property int searchSelection: 0
+  property bool searching: false
+  property string searchError: ""
   property string selectedSymbol: ""
   property string selectedRange: "1M"
   property var chartPoints: []
@@ -136,7 +140,43 @@ Item {
     formKind = "symbol"
     formSelection = 0
     symbolField.text = ""
+    searchResults = []
+    searchSelection = 0
+    searchError = ""
     mode = "form"
+    Qt.callLater(function () { if (m.mode === "form" && m.formKind === "symbol") symbolField.forceActiveFocus() })
+  }
+
+  function searchAssets() {
+    var query = symbolField.text.trim()
+    if (query.length < 2) { searchResults = []; searchSelection = 0; searching = false; searchError = ""; return }
+    searching = true
+    searchError = ""
+    exec(["search", query], function (out) {
+      if (symbolField.text.trim() !== query) return
+      searching = false
+      try {
+        searchResults = JSON.parse((out || "").trim()) || []
+        searchSelection = Math.min(searchSelection, Math.max(0, searchResults.length - 1))
+        if (searchResults.length === 0) searchError = "No assets found"
+      } catch (e) {
+        searchResults = []
+        searchError = "Unable to search assets"
+      }
+    })
+  }
+
+  function moveSearchSelection(delta) {
+    if (searchResults.length === 0) return
+    searchSelection = (searchSelection + delta + searchResults.length) % searchResults.length
+    if (searchList) searchList.positionViewAtIndex(searchSelection, ListView.Contain)
+  }
+
+  function chooseSearchResult(index) {
+    if (index < 0 || index >= searchResults.length) return
+    symbolField.text = searchResults[index].symbol
+    symbolField.focus = false
+    saveForm()
   }
 
   function openLotForm(lot) {
@@ -220,10 +260,45 @@ Item {
     return true
   }
 
+  function revealAssetSelection() {
+    if (!assetScroll) return
+    var row = listSelection - 2
+    var rowStep = Style.space(74)
+    var rowHeight = Style.space(68)
+    var top = row < 0 ? 0 : row * rowStep
+    var bottom = top + rowHeight
+    var target = assetScroll.contentY
+    if (row < 0 || top < target) target = top
+    else if (bottom > target + assetScroll.height) target = bottom - assetScroll.height
+    target = Math.max(0, Math.min(Math.max(0, assetScroll.contentHeight - assetScroll.height), target))
+    assetScrollAnim.stop()
+    assetScrollAnim.from = assetScroll.contentY
+    assetScrollAnim.to = target
+    assetScrollAnim.start()
+  }
+
+  function revealLotSelection() {
+    if (!lotScroll) return
+    var row = Math.floor((detailSelection - 7) / 2)
+    var rowStep = Style.space(44)
+    var rowHeight = Style.space(40)
+    var top = row < 0 ? 0 : row * rowStep
+    var bottom = top + rowHeight
+    var target = lotScroll.contentY
+    if (row < 0 || top < target) target = top
+    else if (bottom > target + lotScroll.height) target = bottom - lotScroll.height
+    target = Math.max(0, Math.min(Math.max(0, lotScroll.contentHeight - lotScroll.height), target))
+    lotScrollAnim.stop()
+    lotScrollAnim.from = lotScroll.contentY
+    lotScrollAnim.to = target
+    lotScrollAnim.start()
+  }
+
   function moveListSelection(dx, dy) {
     if (dx !== 0 && listSelection >= 2) { reorderSelected(dx > 0 ? 1 : -1); return true }
     var step = dy !== 0 ? (dy > 0 ? 1 : -1) : (dx > 0 ? 1 : -1)
     listSelection = (listSelection + step + assets.length + 2) % (assets.length + 2)
+    revealAssetSelection()
     return true
   }
 
@@ -231,6 +306,7 @@ Item {
     var count = 7 + selectedLots().length * 2
     var step = (dy !== 0 ? dy : dx) > 0 ? 1 : -1
     detailSelection = (detailSelection + step + count) % count
+    revealLotSelection()
     return true
   }
 
@@ -335,6 +411,12 @@ Item {
     running: m.visible && root && root.opened
     onTriggered: m.refreshMarkets(false)
   }
+  Timer {
+    id: searchTimer
+    interval: 300
+    repeat: false
+    onTriggered: m.searchAssets()
+  }
 
   Rectangle {
     anchors.fill: parent
@@ -360,7 +442,12 @@ Item {
         height: parent.height - Style.space(48)
 
         Column {
-          visible: m.mode === "list"
+          opacity: m.mode === "list" ? 1 : 0
+          visible: opacity > 0
+          enabled: m.mode === "list"
+          scale: m.mode === "list" ? 1 : 0.985
+          Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+          Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
           anchors.fill: parent
           spacing: Style.space(8)
 
@@ -377,10 +464,12 @@ Item {
           Text { visible: !loading && assets.length === 0; text: "Your watchlist is empty. Add a symbol to begin."; color: Color.muted; font.family: Style.fontFamily; font.pixelSize: Style.font.body }
 
           Flickable {
+            id: assetScroll
             width: parent.width
             height: parent.height - Style.space(100)
             contentHeight: assetColumn.implicitHeight
             clip: true
+            NumberAnimation { id: assetScrollAnim; target: assetScroll; property: "contentY"; duration: 160; easing.type: Easing.OutCubic }
             Column {
               id: assetColumn
               width: parent.width
@@ -431,7 +520,12 @@ Item {
         }
 
         Column {
-          visible: m.mode === "detail"
+          opacity: m.mode === "detail" ? 1 : 0
+          visible: opacity > 0
+          enabled: m.mode === "detail"
+          scale: m.mode === "detail" ? 1 : 0.985
+          Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+          Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
           anchors.fill: parent
           spacing: Style.space(8)
           Row {
@@ -476,7 +570,9 @@ Item {
           Text { text: "Purchase lots"; color: Color.foreground; font.family: Style.fontFamily; font.pixelSize: Style.font.body; font.bold: true }
           Text { visible: m.selectedLots().length === 0; text: "No holdings recorded for this asset."; color: Color.muted; font.family: Style.fontFamily; font.pixelSize: Style.font.bodySmall }
           Flickable {
+            id: lotScroll
             width: parent.width; height: Style.space(150); contentHeight: lotsColumn.implicitHeight; clip: true
+            NumberAnimation { id: lotScrollAnim; target: lotScroll; property: "contentY"; duration: 160; easing.type: Easing.OutCubic }
             Column {
               id: lotsColumn; width: parent.width; spacing: Style.space(4)
               Repeater {
@@ -500,7 +596,12 @@ Item {
         }
 
         Column {
-          visible: m.mode === "form"
+          opacity: m.mode === "form" ? 1 : 0
+          visible: opacity > 0
+          enabled: m.mode === "form"
+          scale: m.mode === "form" ? 1 : 0.985
+          Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+          Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
           anchors.centerIn: parent
           width: Math.min(parent.width, Style.space(460))
           spacing: Style.space(10)
@@ -510,11 +611,50 @@ Item {
           TextField {
             id: symbolField
             visible: formKind === "symbol"
-            width: parent.width; placeholderText: "Symbol, e.g. AAPL"
+            width: parent.width; placeholderText: "Search company or symbol, e.g. Apple or AAPL"
             font.family: Style.fontFamily
             background: FieldBackground { selected: m.formSelection === 0 }
-            onAccepted: m.saveForm()
-            Keys.onEscapePressed: function(event) { symbolField.focus = false; event.accepted = true }
+            onTextEdited: { m.searchResults = []; m.searchSelection = 0; m.searchError = ""; searchTimer.restart() }
+            onAccepted: { if (m.searchResults.length > 0) m.chooseSearchResult(m.searchSelection); else m.searchAssets() }
+            Keys.onDownPressed: function(event) { m.moveSearchSelection(1); event.accepted = true }
+            Keys.onUpPressed: function(event) { m.moveSearchSelection(-1); event.accepted = true }
+            Keys.onEscapePressed: function(event) { searchTimer.stop(); symbolField.focus = false; event.accepted = true }
+          }
+          ListView {
+            id: searchList
+            visible: formKind === "symbol" && searchResults.length > 0
+            width: parent.width
+            height: Math.min(contentHeight, Style.space(190))
+            clip: true
+            spacing: Style.space(4)
+            model: m.searchResults
+            currentIndex: m.searchSelection
+            delegate: Rectangle {
+              required property var modelData
+              required property int index
+              width: searchList.width
+              height: Style.space(38)
+              radius: Style.cornerRadius
+              color: index === m.searchSelection ? Color.menu.selectedBackground : "transparent"
+              border.color: index === m.searchSelection ? Color.accent : Color.popups.border
+              border.width: 1
+              Row {
+                anchors.fill: parent
+                anchors.margins: Style.space(7)
+                spacing: Style.space(10)
+                Text { width: Style.space(86); text: modelData.symbol; color: Color.accent; font.family: Style.fontFamily; font.pixelSize: Style.font.bodySmall; font.bold: true; elide: Text.ElideRight }
+                Text { width: Math.max(0, parent.width - Style.space(230)); text: modelData.name; color: Color.foreground; font.family: Style.fontFamily; font.pixelSize: Style.font.bodySmall; elide: Text.ElideRight }
+                Text { width: Style.space(110); text: modelData.exchange + (modelData.type ? " · " + modelData.type : ""); color: Color.muted; font.family: Style.fontFamily; font.pixelSize: Style.font.caption; elide: Text.ElideRight; horizontalAlignment: Text.AlignRight }
+              }
+              MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: m.chooseSearchResult(index) }
+            }
+          }
+          Text {
+            visible: formKind === "symbol" && (searching || searchError !== "")
+            text: searching ? "Searching assets…" : searchError
+            color: searchError ? Color.foreground : Color.muted
+            font.family: Style.fontFamily
+            font.pixelSize: Style.font.bodySmall
           }
           TextField {
             id: quantityField
@@ -549,7 +689,12 @@ Item {
         }
 
         Rectangle {
-          visible: m.mode === "confirm"
+          opacity: m.mode === "confirm" ? 1 : 0
+          visible: opacity > 0
+          enabled: m.mode === "confirm"
+          scale: m.mode === "confirm" ? 1 : 0.96
+          Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+          Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutBack } }
           anchors.centerIn: parent
           width: Math.min(parent.width - Style.space(40), Style.space(420))
           height: confirmColumn.implicitHeight + Style.space(28)

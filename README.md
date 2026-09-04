@@ -17,6 +17,12 @@ plugins/
   music/      plugin.json + music.qml     ← 🎵 Música
   tasks/      plugin.json + tasks.qml     ← ✓ Tareas
   clipboard/  plugin.json + clipboard.qml ← 📋 Portapapeles
+  clock/      plugin.json + clock.qml     ← Relojes mundiales
+  weather/    plugin.json + weather.qml   ← Clima
+  news/       plugin.json + news.qml      ← RSS/Atom + Omarchy
+  markets/    plugin.json + markets.qml   ← Watchlist + cartera
+  monitor/    plugin.json + monitor.qml   ← CPU/RAM + procesos
+  settings/   plugin.json + settings.qml  ← Ajustes
   _template/  plugin.json + hello.qml     ← copy this to start a new one
 ```
 
@@ -80,13 +86,19 @@ Return `true` when an action was consumed. An unhandled upward `"move"` returns 
 
 `keyboardNavigationBlocked` is also optional and defaults to `false`. While it is `true`, `PanelKeyCatcher` does not consume any key, allowing the focused editor to receive text, arrows, Enter, Space, numbers, Tab and Esc normally. The editor should clear focus or set the property back to `false` when editing ends.
 
-Outside editing, Panel-level controls remain reserved: Tab/Shift+Tab cycle tabs, Esc closes, and 1–9 select a tab. Arrow keys and h/j/k/l navigate tabs until focus enters content. Mouse clicks continue to work independently of this contract.
+Outside editing, Panel-level controls remain reserved: Tab/Shift+Tab cycle tabs and 1–9 select a tab. Esc first offers `"back"` to the active plugin and closes only when it is not consumed. Arrow keys and h/j/k/l navigate tabs until focus enters content. Mouse clicks continue to work independently of this contract.
 
 The panel handles the toolbar, the sliding active-tab indicator, the open/close bloom, crossfades,
 and `centerOnBar` positioning. Your plugin just draws its content and calls `root.run(...)`.
 
-Built-in plugins ship as examples: **Music** (MPRIS), **Tasks**, **Clipboard**. Add more — a weather
-tab, a system monitor, a notes pad, anything — the same way.
+Built-in keyboard-first plugins include **Music**, **Tasks**, **Clipboard**, **Clock**, **Weather**,
+**News**, **Markets**, **Monitor**, and **Settings**.
+
+Plugin-specific keys:
+
+- **Markets:** `↑/↓` selects; `←/→` reorders assets; Enter opens detail/actions; typing in Add searches company names or symbols; `x` confirms removal.
+- **Monitor:** `↑/↓` selects processes; `←/→` changes sort column; `s` reverses sort; `r` refreshes; `/` filters; `x` opens TERM/KILL confirmation.
+- **News:** `↑/↓` selects articles/sources or scrolls the reader; `←/→` changes source/reader action; Enter opens; `x` manages/removes user sources.
 
 ## Animation
 

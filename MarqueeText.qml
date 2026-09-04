@@ -1,8 +1,7 @@
 import QtQuick
 import qs.Commons
 
-// MarqueeText — Text that scrolls horizontally when wider than maxW.
-// Fits: behaves like a normal Text. Overflow: seamless left→right loop.
+// Static when it fits; otherwise two copies form one continuous ticker belt.
 Item {
   id: root
   property string text: ""
@@ -11,13 +10,20 @@ Item {
   property int fontSize: Style.font.bodySmall
   property bool bold: false
   property real maxW: 200
+  property real pixelsPerSecond: 28
+  property real scrollX: 0
 
   readonly property real textW: textMetrics.width
   readonly property bool fits: textW <= maxW
+  readonly property real copyGap: Style.space(18)
+  readonly property real cycleW: textW + copyGap
 
   width: fits ? textW : maxW
   height: textMetrics.height
   clip: true
+
+  onTextChanged: scrollX = 0
+  onMaxWChanged: scrollX = 0
 
   TextMetrics {
     id: textMetrics
@@ -28,32 +34,35 @@ Item {
   }
 
   Text {
-    id: label
+    id: firstCopy
+    x: root.fits ? 0 : root.scrollX
+    anchors.verticalCenter: parent.verticalCenter
     text: root.text
     color: root.color
     font.family: root.fontFamily
     font.pixelSize: root.fontSize
     font.bold: root.bold
-    anchors.verticalCenter: parent.verticalCenter
   }
 
-  SequentialAnimation {
+  Text {
+    id: secondCopy
+    visible: !root.fits
+    x: root.scrollX + root.cycleW
+    anchors.verticalCenter: parent.verticalCenter
+    text: root.text
+    color: root.color
+    font.family: root.fontFamily
+    font.pixelSize: root.fontSize
+    font.bold: root.bold
+  }
+
+  NumberAnimation on scrollX {
     id: marqueeLoop
     running: !root.fits && root.text.length > 0
+    from: 0
+    to: -root.cycleW
+    duration: Math.max(2600, Math.round(root.cycleW / root.pixelsPerSecond * 1000))
     loops: Animation.Infinite
-    NumberAnimation {
-      target: label; property: "x"
-      to: -(Math.max(0, root.textW - root.maxW) + Style.space(16))
-      duration: Math.max(2000, root.textW * 22)
-      easing.type: Easing.Linear
-    }
-    PauseAnimation { duration: 1000 }
-    NumberAnimation {
-      target: label; property: "x"
-      to: 0
-      duration: Math.max(2000, root.textW * 22)
-      easing.type: Easing.Linear
-    }
-    PauseAnimation { duration: 600 }
+    easing.type: Easing.Linear
   }
 }

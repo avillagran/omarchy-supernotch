@@ -1,0 +1,27 @@
+{
+  "quotes": [
+    {
+      "symbol": "AAPL",
+      "shortname": "Apple Inc.",
+      "longname": "Apple Inc.",
+      "exchange": "NMS",
+      "exchDisp": "NASDAQ",
+      "quoteType": "EQUITY",
+      "typeDisp": "Equity"
+    },
+    {
+      "symbol": "APLE",
+      "shortname": "Apple Hospitality REIT, Inc.",
+      "exchange": "NYQ",
+      "exchDisp": "NYSE",
+      "quoteType": "EQUITY",
+      "typeDisp": "Equity"
+    },
+    {
+      "shortname": "Missing symbol",
+      "exchange": "NMS",
+      "quoteType": "EQUITY"
+    }
+  ],
+  "news": [{"title": "Not an asset"}]
+}
