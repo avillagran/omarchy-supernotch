@@ -1,0 +1,13 @@
+{
+  "key": "news",
+  "icon": "󰓰",
+  "barIcon": "󰓰",
+  "label": {
+    "en": "News",
+    "es": "Noticias"
+  },
+  "ui": "news.qml",
+  "refresh": [],
+  "order": 25,
+  "preferredHeight": 510
+}

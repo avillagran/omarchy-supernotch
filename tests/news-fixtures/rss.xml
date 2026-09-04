@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <title>Noticias de prueba</title>
+    <link>https://example.test/es</link>
+    <item>
+      <title>Primera noticia</title>
+      <link>https://example.test/articles/shared?utm_source=rss</link>
+      <guid>rss-1</guid>
+      <pubDate>Fri, 04 Sep 2026 12:30:00 GMT</pubDate>
+      <description><![CDATA[<p>Resumen <strong>RSS</strong>.</p>]]></description>
+      <content:encoded><![CDATA[<p>Contenido completo RSS.</p>]]></content:encoded>
+    </item>
+    <item>
+      <title>Segunda noticia</title>
+      <link>https://example.test/articles/rss-only</link>
+      <guid>rss-2</guid>
+      <pubDate>Fri, 04 Sep 2026 11:00:00 GMT</pubDate>
+      <description>Solo RSS</description>
+    </item>
+  </channel>
+</rss>

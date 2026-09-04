@@ -1,0 +1,432 @@
+#!/usr/bin/env python3
+"""Local RSS/Atom backend for the SuperNotch News plugin."""
+
+from __future__ import annotations
+
+import concurrent.futures
+import datetime as dt
+import email.utils
+import hashlib
+import html.parser
+import json
+import os
+import pathlib
+import re
+import subprocess
+import sys
+import tempfile
+import urllib.parse
+import urllib.request
+import xml.etree.ElementTree as ET
+
+MAX_DOWNLOAD = 2 * 1024 * 1024
+MAX_ARTICLES_PER_SOURCE = 200
+NETWORK_TIMEOUT = 8
+STATE_DIR = pathlib.Path.home() / ".local" / "state" / "omarchy-supernotch"
+CONFIG_FILE = STATE_DIR / "news.json"
+CACHE_FILE = STATE_DIR / "news-cache.json"
+
+BUILTINS = [
+    {"id": "bbc-mundo", "name": "BBC News Mundo", "url": "https://www.bbc.co.uk/mundo/index.xml", "language": "es"},
+    {"id": "dw-es", "name": "DW Español · Portada", "url": "https://rss.dw.com/rdf/rss-sp-top", "language": "es"},
+    {"id": "elpais", "name": "EL PAÍS", "url": "https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/portada", "language": "es"},
+    {"id": "bbc-latam", "name": "BBC News · América Latina", "url": "https://feeds.bbci.co.uk/news/world/latin_america/rss.xml", "language": "es"},
+    {"id": "bbc-world", "name": "BBC News · World", "url": "https://feeds.bbci.co.uk/news/world/rss.xml", "language": "global"},
+    {"id": "guardian-world", "name": "The Guardian · World", "url": "https://www.theguardian.com/world/rss", "language": "global"},
+]
+TRACKING_KEYS = {"fbclid", "gclid", "mc_cid", "mc_eid"}
+
+
+def fail(message: str, status: int = 2) -> None:
+    print(message, file=sys.stderr)
+    raise SystemExit(status)
+
+
+def atomic_json(path: pathlib.Path, value: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=path.name + ".", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(value, handle, ensure_ascii=False, separators=(",", ":"))
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_name, path)
+    finally:
+        try:
+            os.unlink(tmp_name)
+        except FileNotFoundError:
+            pass
+
+
+def read_json(path: pathlib.Path, fallback: object) -> object:
+    try:
+        with path.open(encoding="utf-8") as handle:
+            value = json.load(handle)
+        return value
+    except (OSError, ValueError, TypeError):
+        return fallback
+
+
+def config() -> dict:
+    raw = read_json(CONFIG_FILE, {})
+    if not isinstance(raw, dict):
+        raw = {}
+    raw.setdefault("userSources", [])
+    raw.setdefault("enabled", {})
+    raw.setdefault("read", [])
+    return raw
+
+
+def save_config(value: dict) -> None:
+    value["read"] = list(dict.fromkeys(value.get("read", [])))[-5000:]
+    atomic_json(CONFIG_FILE, value)
+
+
+def valid_url(value: str) -> str:
+    if not isinstance(value, str) or len(value) > 4096:
+        fail("invalid URL")
+    try:
+        parsed = urllib.parse.urlsplit(value)
+        _ = parsed.port
+    except (ValueError, TypeError):
+        fail("invalid URL")
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        fail("only absolute http/https URLs are allowed")
+    if parsed.username is not None or parsed.password is not None:
+        fail("credentials are not allowed in URLs")
+    if any(ord(ch) < 32 for ch in value):
+        fail("control characters are not allowed in URLs")
+    return urllib.parse.urlunsplit(parsed)
+
+
+def canonical_url(value: str) -> str:
+    parsed = urllib.parse.urlsplit(valid_url(value))
+    query = []
+    for key, val in urllib.parse.parse_qsl(parsed.query, keep_blank_values=True):
+        if key.lower().startswith("utm_") or key.lower() in TRACKING_KEYS:
+            continue
+        query.append((key, val))
+    host = (parsed.hostname or "").lower()
+    port = parsed.port
+    netloc = host if port is None else f"{host}:{port}"
+    path = parsed.path or "/"
+    if path != "/":
+        path = path.rstrip("/")
+    return urllib.parse.urlunsplit((parsed.scheme.lower(), netloc, path, urllib.parse.urlencode(sorted(query)), ""))
+
+
+def all_sources(cfg: dict | None = None) -> list[dict]:
+    cfg = cfg or config()
+    enabled = cfg.get("enabled", {}) if isinstance(cfg.get("enabled"), dict) else {}
+    result = [dict(source, builtin=True, enabled=enabled.get(source["id"], True)) for source in BUILTINS]
+    seen = {source["id"] for source in result}
+    for source in cfg.get("userSources", []):
+        if not isinstance(source, dict) or source.get("id") in seen:
+            continue
+        try:
+            url = valid_url(source.get("url", ""))
+        except SystemExit:
+            continue
+        result.append({
+            "id": str(source.get("id", "")),
+            "name": str(source.get("name") or urllib.parse.urlsplit(url).hostname)[:120],
+            "url": url,
+            "language": "custom",
+            "builtin": False,
+            "enabled": enabled.get(source["id"], True),
+        })
+        seen.add(source["id"])
+    return result
+
+
+class TextExtractor(html.parser.HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+
+    def handle_data(self, data: str) -> None:
+        self.parts.append(data)
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag.lower() in ("br", "p", "div", "li", "h1", "h2", "h3"):
+            self.parts.append("\n")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.lower() in ("p", "div", "li", "h1", "h2", "h3"):
+            self.parts.append("\n")
+
+
+def plain(value: str | None, limit: int) -> str:
+    parser = TextExtractor()
+    try:
+        parser.feed(value or "")
+        text = " ".join("".join(parser.parts).split())
+    except Exception:
+        text = " ".join((value or "").split())
+    return text[:limit]
+
+
+def local_name(tag: str) -> str:
+    return tag.rsplit("}", 1)[-1].lower()
+
+
+def child_text(node: ET.Element, names: tuple[str, ...]) -> str:
+    wanted = set(names)
+    for child in list(node):
+        if local_name(child.tag) in wanted:
+            return "".join(child.itertext()).strip()
+    return ""
+
+
+def parsed_date(value: str) -> str:
+    if not value:
+        return ""
+    try:
+        parsed = email.utils.parsedate_to_datetime(value)
+    except (TypeError, ValueError, OverflowError):
+        try:
+            parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            return ""
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=dt.timezone.utc)
+    return parsed.astimezone(dt.timezone.utc).isoformat()
+
+
+def article_id(link: str, fallback: str) -> str:
+    identity = canonical_url(link) if link else fallback.strip()
+    return hashlib.sha256(identity.encode("utf-8", "replace")).hexdigest()[:24]
+
+
+def safe_link(raw: str, feed_url: str) -> str:
+    if not raw:
+        return ""
+    try:
+        return valid_url(urllib.parse.urljoin(feed_url, raw.strip()))
+    except SystemExit:
+        return ""
+
+
+def parse_feed(data: bytes, source_id: str, source_name: str, feed_url: str) -> list[dict]:
+    valid_url(feed_url)
+    if len(data) > MAX_DOWNLOAD:
+        fail("feed exceeds 2 MiB limit")
+    upper = data.upper()
+    if b"<!DOCTYPE" in upper or b"<!ENTITY" in upper:
+        fail("XML declarations are not allowed")
+    try:
+        root = ET.fromstring(data)
+    except ET.ParseError as exc:
+        fail(f"invalid XML: {exc}")
+    kind = local_name(root.tag)
+    nodes = [node for node in root.iter() if local_name(node.tag) == ("entry" if kind == "feed" else "item")]
+    articles: list[dict] = []
+    for node in nodes[:MAX_ARTICLES_PER_SOURCE]:
+        title = plain(child_text(node, ("title",)), 500)
+        if kind == "feed":
+            raw_link = ""
+            fallback_link = ""
+            for child in list(node):
+                if local_name(child.tag) != "link":
+                    continue
+                href = child.attrib.get("href", "")
+                if child.attrib.get("rel", "alternate") == "alternate":
+                    raw_link = href
+                    break
+                fallback_link = fallback_link or href
+            raw_link = raw_link or fallback_link
+            guid = child_text(node, ("id",))
+            date = child_text(node, ("published", "updated"))
+            summary = child_text(node, ("summary",))
+            content = child_text(node, ("content",))
+        else:
+            raw_link = child_text(node, ("link",))
+            guid = child_text(node, ("guid", "id"))
+            date = child_text(node, ("pubdate", "date", "updated"))
+            summary = child_text(node, ("description", "summary"))
+            content = child_text(node, ("encoded", "content"))
+        link = safe_link(raw_link, feed_url)
+        if not title or not (link or guid):
+            continue
+        fallback = guid or f"{source_id}\n{title}\n{date}"
+        articles.append({
+            "id": article_id(link, fallback),
+            "sourceId": source_id,
+            "sourceName": source_name[:120],
+            "title": title,
+            "link": link,
+            "date": parsed_date(date),
+            "summary": plain(summary, 4000),
+            "content": plain(content, 30000),
+        })
+    return articles
+
+
+def download(url: str) -> bytes:
+    url = valid_url(url)
+    request = urllib.request.Request(url, headers={"User-Agent": "Omarchy-SuperNotch-News/1.0", "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml;q=0.9"})
+    with urllib.request.urlopen(request, timeout=NETWORK_TIMEOUT) as response:
+        valid_url(response.geturl())
+        length = response.headers.get("Content-Length")
+        if length and int(length) > MAX_DOWNLOAD:
+            fail("feed exceeds 2 MiB limit")
+        data = response.read(MAX_DOWNLOAD + 1)
+    if len(data) > MAX_DOWNLOAD:
+        fail("feed exceeds 2 MiB limit")
+    return data
+
+
+def cache() -> dict:
+    raw = read_json(CACHE_FILE, {})
+    return raw if isinstance(raw, dict) else {}
+
+
+def source_by_id(source_id: str, cfg: dict | None = None) -> dict:
+    for source in all_sources(cfg):
+        if source["id"] == source_id:
+            return source
+    fail("unknown source")
+
+
+def merged_articles(cfg: dict | None = None, cached: dict | None = None) -> list[dict]:
+    cfg = cfg or config()
+    cached = cached or cache()
+    enabled_ids = {source["id"] for source in all_sources(cfg) if source["enabled"]}
+    read = set(cfg.get("read", []))
+    by_key: dict[str, dict] = {}
+    for source_id, entry in cached.items():
+        if source_id not in enabled_ids or not isinstance(entry, dict):
+            continue
+        for article in entry.get("articles", []):
+            if not isinstance(article, dict):
+                continue
+            link = article.get("link", "")
+            key = canonical_url(link) if link else str(article.get("id", ""))
+            current = by_key.get(key)
+            if current is None or str(article.get("date", "")) > str(current.get("date", "")):
+                by_key[key] = dict(article)
+    result = list(by_key.values())
+    result.sort(key=lambda item: str(item.get("date", "")), reverse=True)
+    for article in result:
+        article["unread"] = article.get("id") not in read
+    return result[:1000]
+
+
+def add_source(url: str, name: str = "") -> dict:
+    url = valid_url(url)
+    cfg = config()
+    if any(canonical_url(source["url"]) == canonical_url(url) for source in all_sources(cfg)):
+        fail("source already exists")
+    source_id = "user-" + hashlib.sha256(url.encode()).hexdigest()[:12]
+    source = {"id": source_id, "name": plain(name, 120) or (urllib.parse.urlsplit(url).hostname or "Feed"), "url": url, "language": "custom"}
+    cfg["userSources"].append(source)
+    save_config(cfg)
+    return dict(source, builtin=False, enabled=True)
+
+
+def refresh() -> dict:
+    cfg = config()
+    cached = cache()
+    sources = [source for source in all_sources(cfg) if source["enabled"]]
+    now = dt.datetime.now(dt.timezone.utc).isoformat()
+
+    def fetch(source: dict) -> tuple[str, list[dict] | None, str]:
+        try:
+            return source["id"], parse_feed(download(source["url"]), source["id"], source["name"], source["url"]), ""
+        except (Exception, SystemExit) as exc:
+            return source["id"], None, str(exc)
+
+    errors: dict[str, str] = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+        for source_id, articles, error in executor.map(fetch, sources):
+            if articles is None:
+                errors[source_id] = error or "refresh failed"
+                continue
+            cached[source_id] = {"fetchedAt": now, "articles": articles}
+    atomic_json(CACHE_FILE, cached)
+    articles = merged_articles(cfg, cached)
+    return {"articles": articles, "sources": all_sources(cfg), "errors": errors, "offline": bool(errors) and not any(source["id"] not in errors for source in sources), "cached": bool(errors)}
+
+
+def require_fixture_mode() -> None:
+    if os.environ.get("NEWS_ALLOW_FIXTURES") != "1":
+        fail("fixture commands are disabled")
+
+
+def main(argv: list[str]) -> None:
+    command = argv[0] if argv else ""
+    if command == "sources":
+        print(json.dumps(all_sources(), ensure_ascii=False))
+    elif command == "articles":
+        print(json.dumps(merged_articles(), ensure_ascii=False))
+    elif command == "refresh":
+        print(json.dumps(refresh(), ensure_ascii=False))
+    elif command == "add-source" and len(argv) >= 2:
+        print(json.dumps(add_source(argv[1], argv[2] if len(argv) > 2 else ""), ensure_ascii=False))
+    elif command in ("remove-source", "move-source", "toggle-source") and len(argv) >= 2:
+        cfg = config()
+        source = source_by_id(argv[1], cfg)
+        if command == "remove-source":
+            if source["builtin"]:
+                fail("built-in sources cannot be removed")
+            cfg["userSources"] = [item for item in cfg["userSources"] if item.get("id") != source["id"]]
+            cfg["enabled"].pop(source["id"], None)
+            cached = cache()
+            cached.pop(source["id"], None)
+            atomic_json(CACHE_FILE, cached)
+        elif command == "move-source":
+            if source["builtin"]:
+                fail("only user sources can be reordered")
+            try:
+                delta = int(argv[2])
+            except (IndexError, ValueError):
+                fail("move delta required")
+            users = cfg["userSources"]
+            index = next(index for index, item in enumerate(users) if item.get("id") == source["id"])
+            target = max(0, min(len(users) - 1, index + (-1 if delta < 0 else 1)))
+            users[index], users[target] = users[target], users[index]
+        else:
+            cfg["enabled"][source["id"]] = not source["enabled"]
+        save_config(cfg)
+        print(json.dumps(all_sources(cfg), ensure_ascii=False))
+    elif command == "mark" and len(argv) == 3 and argv[2] in ("read", "unread"):
+        article_id_value = argv[1]
+        if not re.fullmatch(r"[0-9a-f]{24}", article_id_value):
+            fail("invalid article id")
+        cfg = config()
+        read = set(cfg["read"])
+        if argv[2] == "read":
+            read.add(article_id_value)
+        else:
+            read.discard(article_id_value)
+        cfg["read"] = sorted(read)
+        save_config(cfg)
+        print(json.dumps({"id": article_id_value, "unread": argv[2] == "unread"}))
+    elif command == "open" and len(argv) == 2:
+        url = valid_url(argv[1])
+        subprocess.Popen(["xdg-open", url], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        print("{}")
+    elif command == "validate-url" and len(argv) == 2:
+        valid_url(argv[1])
+        print("{}")
+    elif command == "parse-file" and len(argv) == 5:
+        require_fixture_mode()
+        path = pathlib.Path(argv[1])
+        data = path.read_bytes() if path.stat().st_size <= MAX_DOWNLOAD else fail("feed exceeds 2 MiB limit")
+        print(json.dumps(parse_feed(data, argv[2], argv[3], argv[4]), ensure_ascii=False))
+    elif command == "import-file" and len(argv) == 3:
+        require_fixture_mode()
+        source = source_by_id(argv[1])
+        path = pathlib.Path(argv[2])
+        data = path.read_bytes() if path.stat().st_size <= MAX_DOWNLOAD else fail("feed exceeds 2 MiB limit")
+        cached = cache()
+        articles = parse_feed(data, source["id"], source["name"], source["url"])
+        cached[source["id"]] = {"fetchedAt": dt.datetime.now(dt.timezone.utc).isoformat(), "articles": articles}
+        atomic_json(CACHE_FILE, cached)
+        print(json.dumps(articles, ensure_ascii=False))
+    else:
+        fail("usage: backend sources|articles|refresh|add-source|remove-source|move-source|toggle-source|mark|open")
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])
