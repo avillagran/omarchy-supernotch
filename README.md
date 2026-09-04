@@ -68,6 +68,7 @@ Item {
     if (action === "activate") { activate(selectedIndex); return true } // Enter or Space
     if (action === "delete") { remove(selectedIndex); return true }     // x or X
     if (action === "text") { search += payload.text; return true }      // other one-character keys
+    if (action === "back") { closeDetailOrConfirmation(); return true } // Esc before panel close
     return false
   }
 
@@ -75,7 +76,7 @@ Item {
 }
 ```
 
-Return `true` when an action was consumed. An unhandled upward `"move"` returns keyboard focus to the tabs; other unhandled actions are ignored. The contract is optional, so plugins without the function keep working and remain clickable.
+Return `true` when an action was consumed. An unhandled upward `"move"` returns keyboard focus to the tabs. `"back"` is dispatched on Esc while content has focus; return `true` to close an internal detail/form/confirmation, or `false` to let Esc close SuperNotch. Other unhandled actions are ignored. The contract is optional, so plugins without the function keep working and remain clickable.
 
 `keyboardNavigationBlocked` is also optional and defaults to `false`. While it is `true`, `PanelKeyCatcher` does not consume any key, allowing the focused editor to receive text, arrows, Enter, Space, numbers, Tab and Esc normally. The editor should clear focus or set the property back to `false` when editing ends.
 
@@ -107,7 +108,7 @@ The plugin drops a `SUPER + SHIFT + N` keybind automatically. Or click the cente
 - **Click a tab** to switch plugins.
 - **Tab/Shift+Tab** or **Left/Right** (`h`/`l`) switches tabs; **Down** (`j`) enters plugin content.
 - **1–9** jumps directly to a tab.
-- **Esc** closes the panel.
+- **Esc** returns from an internal plugin view first, then closes the panel.
 
 ## Helper
 

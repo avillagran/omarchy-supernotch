@@ -346,7 +346,11 @@ Panel {
       id: keyCatcher
       anchors.fill: parent
       blocked: KeyboardNavigation.isBlocked(root.activePluginItem)
-      onCloseRequested: root.close()
+      onCloseRequested: {
+        if (root.focusSection === "content" && root.dispatchKeyboardAction("back", {}))
+          return
+        root.close()
+      }
       onTabRequested: function (d) { var n = Math.max(1, root.plugins.length); root.setModule((root.current + d + n) % n); root.focusSection = "tabs" }
       onMoveRequested: function (dx, dy) {
         if (root.focusSection === "tabs") {

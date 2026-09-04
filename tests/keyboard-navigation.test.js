@@ -54,6 +54,15 @@ test("Panel routes content actions through the keyboard contract", () => {
   assert.match(panel, /dispatchKeyboardAction\("text",\s*\{ text: t \}\)/);
 });
 
+test("Escape lets the active plugin go back before closing the panel", () => {
+  const panel = fs.readFileSync(path.join(repoRoot, "Panel.qml"), "utf8");
+
+  assert.match(
+    panel,
+    /onCloseRequested:\s*\{[\s\S]*focusSection === "content"[\s\S]*dispatchKeyboardAction\("back",\s*\{\}\)[\s\S]*root\.close\(\)[\s\S]*\}/,
+  );
+});
+
 test("plugin author documentation defines the keyboard contract", () => {
   const readme = fs.readFileSync(path.join(repoRoot, "README.md"), "utf8");
   const template = fs.readFileSync(path.join(repoRoot, "plugins/_template/hello.qml"), "utf8");
@@ -64,5 +73,6 @@ test("plugin author documentation defines the keyboard contract", () => {
   assert.match(readme, /"activate"/);
   assert.match(readme, /"delete"/);
   assert.match(readme, /"text"/);
+  assert.match(readme, /"back"/);
   assert.match(template, /property string pluginKey/);
 });

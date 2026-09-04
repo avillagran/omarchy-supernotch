@@ -15,7 +15,7 @@ import qs.Ui
 // Optional keyboard API:
 //   property bool keyboardNavigationBlocked: editor.activeFocus
 //   function handleKeyboardAction(action, payload) { ...; return true }
-// Actions are "move", "activate", "delete" and "text"; return true when handled.
+// Actions are "move", "activate", "delete", "text" and "back"; return true when handled.
 //
 // Keep all visuals themed (Color.*). The panel crossfades your content in/out.
 
