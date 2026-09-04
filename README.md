@@ -40,11 +40,46 @@ omarchy plugin reload   # or restart the shell
 }
 ```
 
-`mything.qml` receives `root` (the Panel). Use:
+`mything.qml` receives `root` (the Panel) and `pluginKey` (its manifest key). Use:
 - `root.run(["helper-cmd", arg], function(out){ /* out = stdout */ })` — run a shell command.
 - `root.t(root.uiLang, "key")` — translate a string.
 - `root.uiLang` — `"en"` | `"es"`.
 - `Color.*` / `Style.*` — **theme tokens only; never hardcode colors.**
+
+### Optional keyboard contract
+
+Plugins can opt into keyboard navigation by exposing `handleKeyboardAction(action, payload)`. The Panel calls it only on the active plugin while keyboard focus is in the content area:
+
+```qml
+Item {
+  property var root: null
+  property string pluginKey: ""
+  property int selectedIndex: 0
+
+  // Bind this to every inline editor that must receive raw key events.
+  property bool keyboardNavigationBlocked: editor.activeFocus
+
+  function handleKeyboardAction(action, payload) {
+    if (action === "move") {
+      // payload.dx/payload.dy are -1, 0 or 1 (arrows and h/j/k/l).
+      selectedIndex = Math.max(0, selectedIndex + payload.dy)
+      return true
+    }
+    if (action === "activate") { activate(selectedIndex); return true } // Enter or Space
+    if (action === "delete") { remove(selectedIndex); return true }     // x or X
+    if (action === "text") { search += payload.text; return true }      // other one-character keys
+    return false
+  }
+
+  TextField { id: editor }
+}
+```
+
+Return `true` when an action was consumed. An unhandled upward `"move"` returns keyboard focus to the tabs; other unhandled actions are ignored. The contract is optional, so plugins without the function keep working and remain clickable.
+
+`keyboardNavigationBlocked` is also optional and defaults to `false`. While it is `true`, `PanelKeyCatcher` does not consume any key, allowing the focused editor to receive text, arrows, Enter, Space, numbers, Tab and Esc normally. The editor should clear focus or set the property back to `false` when editing ends.
+
+Outside editing, Panel-level controls remain reserved: Tab/Shift+Tab cycle tabs, Esc closes, and 1–9 select a tab. Arrow keys and h/j/k/l navigate tabs until focus enters content. Mouse clicks continue to work independently of this contract.
 
 The panel handles the toolbar, the sliding active-tab indicator, the open/close bloom, crossfades,
 and `centerOnBar` positioning. Your plugin just draws its content and calls `root.run(...)`.
@@ -70,6 +105,8 @@ The plugin drops a `SUPER + SHIFT + N` keybind automatically. Or click the cente
 
 - **Click** the center pill (or `SUPER + SHIFT + N`) to open/close.
 - **Click a tab** to switch plugins.
+- **Tab/Shift+Tab** or **Left/Right** (`h`/`l`) switches tabs; **Down** (`j`) enters plugin content.
+- **1–9** jumps directly to a tab.
 - **Esc** closes the panel.
 
 ## Helper

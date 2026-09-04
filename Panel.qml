@@ -6,6 +6,7 @@ import Quickshell
 import Quickshell.Io
 import qs.Commons
 import qs.Ui
+import "KeyboardNavigation.js" as KeyboardNavigation
 
 // SuperNotch — the animated command-center card. PLUGIN FRAMEWORK: every tab is
 // plugins/<key>/<key>.qml discovered at runtime via the helper `plugins-list`.
@@ -273,6 +274,10 @@ Panel {
   // Dynamic height: the card grows to fit the active plugin's real content
   // height (each plugin reports its own implicitHeight; no manual slider).
   property var contentRefs: []
+  readonly property var activePluginItem: KeyboardNavigation.activePlugin(root.contentRefs, root.current)
+  function dispatchKeyboardAction(action, payload) {
+    return KeyboardNavigation.dispatch(root.activePluginItem, action, payload)
+  }
   function pluginHeight() {
     var item = root.contentRefs[root.current]
     var h = (item && item.implicitHeight > 0) ? item.implicitHeight : 360
@@ -340,6 +345,7 @@ Panel {
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
+      blocked: KeyboardNavigation.isBlocked(root.activePluginItem)
       onCloseRequested: root.close()
       onTabRequested: function (d) { var n = Math.max(1, root.plugins.length); root.setModule((root.current + d + n) % n); root.focusSection = "tabs" }
       onMoveRequested: function (dx, dy) {
@@ -347,19 +353,23 @@ Panel {
           if (dx !== 0) { var n2 = Math.max(1, root.plugins.length); root.setModule((root.current + (dx > 0 ? 1 : -1) + n2) % n2) }
           else if (dy > 0) { root.focusSection = "content" }
         } else {
-          if (dy < 0) { root.focusSection = "tabs" }
-          // horizontal moves inside content could be forwarded to plugins later
+          var handled = root.dispatchKeyboardAction("move", { dx: dx, dy: dy })
+          if (!handled && dy < 0) root.focusSection = "tabs"
         }
       }
       onActivateRequested: {
         if (root.focusSection === "tabs") root.focusSection = "content"
+        else root.dispatchKeyboardAction("activate", {})
       }
+      onDeleteRequested: root.dispatchKeyboardAction("delete", {})
       onTextKey: function (t) {
         // digit 1-9 jumps straight to that tab
         if (t >= "1" && t <= "9") {
           var idx = parseInt(t, 10) - 1
           if (idx < root.plugins.length) { root.openPlugin(root.plugins[idx].key); root.focusSection = "tabs" }
+          return
         }
+        if (root.focusSection === "content") root.dispatchKeyboardAction("text", { text: t })
       }
     }
 

@@ -12,11 +12,16 @@ import qs.Ui
 //   root.t(root.uiLang, "key")                                 // translate a string
 //   root.uiLang                                               // "en" | "es"
 //   Color.* / Style.*                                         // theme tokens (never hardcode colors)
+// Optional keyboard API:
+//   property bool keyboardNavigationBlocked: editor.activeFocus
+//   function handleKeyboardAction(action, payload) { ...; return true }
+// Actions are "move", "activate", "delete" and "text"; return true when handled.
 //
 // Keep all visuals themed (Color.*). The panel crossfades your content in/out.
 
 Item {
   property var root: null
+  property string pluginKey: ""
   anchors.fill: parent
   anchors.margins: Style.space(20)
 
