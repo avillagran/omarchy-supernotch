@@ -8,6 +8,6 @@
   },
   "ui": "monitor.qml",
   "refresh": [],
-  "order": 35,
+  "order": 45,
   "preferredHeight": 560
 }

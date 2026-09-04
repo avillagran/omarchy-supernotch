@@ -107,11 +107,29 @@ Item {
     cursor = 0
   }
 
+  function revealSelectedSource() {
+    if (!sourceStrip || !sourceChips) return
+    var enabled = sources.filter(function (source) { return source.enabled })
+    var index = enabled.findIndex(function (source) { return source.id === selectedSource })
+    var item = selectedSource === "all" ? allChip : sourceRepeater.itemAt(index)
+    if (!item) return
+    var margin = Style.space(8)
+    var target = sourceStrip.contentX
+    if (item.x < target + margin) target = Math.max(0, item.x - margin)
+    else if (item.x + item.width > target + sourceStrip.width - margin)
+      target = Math.min(Math.max(0, sourceStrip.contentWidth - sourceStrip.width), item.x + item.width - sourceStrip.width + margin)
+    sourceStripScroll.stop()
+    sourceStripScroll.from = sourceStrip.contentX
+    sourceStripScroll.to = target
+    sourceStripScroll.start()
+  }
+
   function openArticle(index) {
     if (index < 0 || index >= filteredArticles.length) return
     currentArticle = filteredArticles[index]
     screen = "reader"
     readerAction = 0
+    readerScroll.contentY = 0
     if (currentArticle.unread) markArticle(currentArticle, false)
   }
 
@@ -131,9 +149,20 @@ Item {
     })
   }
 
+  function canOpenExternal(article) {
+    if (!article || !article.link) return false
+    return sources.some(function (source) { return source.id === article.sourceId && source.builtin })
+  }
+
+  function readerActions() {
+    var actions = [tr("Back", "Volver"), currentArticle && currentArticle.unread ? tr("Mark read", "Marcar leída") : tr("Mark unread", "Marcar no leída")]
+    if (canOpenExternal(currentArticle)) actions.push(tr("Open original", "Abrir original"))
+    return actions
+  }
+
   function openExternal(article) {
-    if (!article || !article.link) return
-    exec(["open", article.link], function () {})
+    if (!canOpenExternal(article)) return
+    exec(["open", article.id], function () {})
   }
 
   function showArticles() {
@@ -222,6 +251,7 @@ Item {
   }
 
   function handleKeyboardAction(action, payload) {
+    if (action === "back") return goBack()
     if (action === "move") {
       var dx = payload.dx || 0
       var dy = payload.dy || 0
@@ -229,7 +259,11 @@ Item {
         if (dy) moveCursor(dy > 0 ? 1 : -1)
         else if (dx) cycleSource(dx > 0 ? 1 : -1)
       } else if (screen === "reader") {
-        if (dx || dy) readerAction = (readerAction + ((dx > 0 || dy > 0) ? 1 : -1) + 3) % 3
+        if (dy) readerScroll.scrollBy(dy > 0 ? Style.space(96) : -Style.space(96))
+        else if (dx) {
+          var readerCount = readerActions().length
+          readerAction = (readerAction + (dx > 0 ? 1 : -1) + readerCount) % readerCount
+        }
       } else if (screen === "sources") {
         if (dy) { moveCursor(dy > 0 ? 1 : -1); sourceAction = 0 }
         else if (dx) {
@@ -262,7 +296,8 @@ Item {
   }
 
   onUnreadCountChanged: pushNotch()
-  onPluginVisibleChanged: if (pluginVisible) { loadData(); if (Date.now() - lastRefreshAt > 300000) refreshAll() }
+  onPluginVisibleChanged: if (pluginVisible) { loadData(); if (Date.now() - lastRefreshAt > 900000) refreshAll() }
+  onSelectedSourceChanged: Qt.callLater(m.revealSelectedSource)
   Component.onCompleted: loadData()
 
   Timer {
@@ -335,37 +370,56 @@ Item {
         }
       }
 
-      Row {
+      Flickable {
+        id: sourceStrip
         visible: screen === "articles"
         width: parent.width
         height: Style.space(28)
-        spacing: Style.space(6)
-        Rectangle {
-          width: allLabel.implicitWidth + Style.space(18); height: parent.height; radius: height / 2
-          color: selectedSource === "all" ? Color.accent : Color.menu.selectedBackground
-          Text { id: allLabel; anchors.centerIn: parent; text: m.tr("All", "Todas"); color: selectedSource === "all" ? Color.background : Color.foreground; font.family: Style.fontFamily; font.pixelSize: Style.font.caption }
-          MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: { m.selectedSource = "all"; m.cursor = 0 } }
-        }
-        Repeater {
-          model: m.sources.filter(function (source) { return source.enabled }).slice(0, 7)
+        contentWidth: sourceChips.width
+        contentHeight: height
+        clip: true
+        interactive: contentWidth > width
+        boundsBehavior: Flickable.StopAtBounds
+        Row {
+          id: sourceChips
+          width: implicitWidth
+          height: parent.height
+          spacing: Style.space(6)
           Rectangle {
-            required property var modelData
-            width: chipLabel.implicitWidth + Style.space(18); height: parent.height; radius: height / 2
-            color: m.selectedSource === modelData.id ? Color.accent : Color.menu.selectedBackground
-            Text { id: chipLabel; anchors.centerIn: parent; text: modelData.name; color: m.selectedSource === modelData.id ? Color.background : Color.foreground; font.family: Style.fontFamily; font.pixelSize: Style.font.caption }
-            MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: { m.selectedSource = modelData.id; m.cursor = 0 } }
+            id: allChip
+            width: allLabel.implicitWidth + Style.space(18); height: parent.height; radius: height / 2
+            color: selectedSource === "all" ? Color.accent : Color.menu.selectedBackground
+            Text { id: allLabel; anchors.centerIn: parent; text: m.tr("All", "Todas"); color: selectedSource === "all" ? Color.background : Color.foreground; font.family: Style.fontFamily; font.pixelSize: Style.font.caption }
+            MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: { m.selectedSource = "all"; m.cursor = 0 } }
+          }
+          Repeater {
+            id: sourceRepeater
+            model: m.sources.filter(function (source) { return source.enabled })
+            Rectangle {
+              required property var modelData
+              width: chipLabel.implicitWidth + Style.space(18); height: sourceChips.height; radius: height / 2
+              color: m.selectedSource === modelData.id ? Color.accent : Color.menu.selectedBackground
+              Text { id: chipLabel; anchors.centerIn: parent; text: modelData.name; color: m.selectedSource === modelData.id ? Color.background : Color.foreground; font.family: Style.fontFamily; font.pixelSize: Style.font.caption }
+              MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: { m.selectedSource = modelData.id; m.cursor = 0 } }
+            }
           }
         }
+        NumberAnimation { id: sourceStripScroll; target: sourceStrip; property: "contentX"; duration: 180; easing.type: Easing.OutCubic }
       }
 
       Item {
         width: parent.width
-        height: parent.height - Style.space(screen === "articles" ? 84 : 48)
+        height: parent.height - Style.space(screen === "articles" ? 106 : 68)
 
         ListView {
           id: articleList
           anchors.fill: parent
-          visible: screen === "articles"
+          opacity: screen === "articles" ? 1 : 0
+          visible: opacity > 0
+          enabled: screen === "articles"
+          scale: screen === "articles" ? 1 : 0.985
+          Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+          Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
           clip: true
           spacing: Style.space(5)
           model: m.filteredArticles
@@ -374,7 +428,7 @@ Item {
             required property int index
             required property var modelData
             width: articleList.width
-            height: Style.space(72)
+            height: Style.space(70)
             radius: Style.cornerRadius
             color: index === m.cursor ? Color.menu.selectedBackground : (articleMouse.containsMouse ? Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.05) : "transparent")
             border.color: index === m.cursor ? Color.accent : Color.popups.border
@@ -394,10 +448,29 @@ Item {
         Flickable {
           id: readerScroll
           anchors.fill: parent
-          visible: screen === "reader"
+          opacity: screen === "reader" ? 1 : 0
+          visible: opacity > 0
+          enabled: screen === "reader"
+          scale: screen === "reader" ? 1 : 0.985
+          Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+          Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
           clip: true
           contentHeight: readerColumn.implicitHeight
           boundsBehavior: Flickable.StopAtBounds
+          function scrollBy(delta) {
+            var maxY = Math.max(0, contentHeight - height)
+            readerKeyScroll.stop()
+            readerKeyScroll.from = contentY
+            readerKeyScroll.to = Math.max(0, Math.min(maxY, contentY + delta))
+            readerKeyScroll.start()
+          }
+          NumberAnimation {
+            id: readerKeyScroll
+            target: readerScroll
+            property: "contentY"
+            duration: 160
+            easing.type: Easing.OutCubic
+          }
           Column {
             id: readerColumn
             width: readerScroll.width
@@ -405,7 +478,7 @@ Item {
             Row {
               spacing: Style.space(8)
               Repeater {
-                model: [m.tr("Back", "Volver"), currentArticle && currentArticle.unread ? m.tr("Mark read", "Marcar leída") : m.tr("Mark unread", "Marcar no leída"), m.tr("Open original", "Abrir original")]
+                model: m.readerActions()
                 Rectangle {
                   required property int index
                   required property string modelData
@@ -424,7 +497,12 @@ Item {
 
         Column {
           anchors.fill: parent
-          visible: screen === "sources"
+          opacity: screen === "sources" ? 1 : 0
+          visible: opacity > 0
+          enabled: screen === "sources"
+          scale: screen === "sources" ? 1 : 0.985
+          Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+          Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
           spacing: Style.space(8)
           Row {
             spacing: Style.space(8)
@@ -470,7 +548,12 @@ Item {
 
         Column {
           anchors.centerIn: parent
-          visible: screen === "add"
+          opacity: screen === "add" ? 1 : 0
+          visible: opacity > 0
+          enabled: screen === "add"
+          scale: screen === "add" ? 1 : 0.96
+          Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+          Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutBack } }
           width: Math.min(parent.width, Style.space(560))
           spacing: Style.space(10)
           Text { text: m.tr("Add RSS or Atom feed", "Agregar fuente RSS o Atom"); color: Color.foreground; font.family: Style.fontFamily; font.pixelSize: Style.font.title; font.bold: true }
@@ -507,7 +590,12 @@ Item {
 
         Rectangle {
           anchors.centerIn: parent
-          visible: screen === "confirm"
+          opacity: screen === "confirm" ? 1 : 0
+          visible: opacity > 0
+          enabled: screen === "confirm"
+          scale: screen === "confirm" ? 1 : 0.94
+          Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+          Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutBack } }
           width: Style.space(420); height: Style.space(150); radius: Style.cornerRadius
           color: Color.background
           border.color: Color.popups.border

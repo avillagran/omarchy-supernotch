@@ -108,10 +108,14 @@ test("detail reports command, state, memory, threads and start time", () => {
 
 test("kill rejects critical targets and only allows TERM or KILL", () => {
   const f = fixture();
-  for (const [pid, signal] of [["1", "TERM"], ["300", "KILL"], ["400", "TERM"], ["100", "STOP"], ["abc", "TERM"]]) {
-    const result = run(f, ["kill", pid, signal]);
+  for (const [pid, start, signal] of [["1", "50", "TERM"], ["300", "50", "KILL"], ["400", "50", "TERM"], ["100", "50", "STOP"], ["abc", "50", "TERM"]]) {
+    const result = run(f, ["kill", pid, start, signal]);
     assert.notEqual(result.status, 0, `${pid} ${signal} unexpectedly allowed`);
   }
-  const allowed = json(run(f, ["kill", "100", "TERM"]));
+  const reused = run(f, ["kill", "100", "999", "TERM"]);
+  assert.notEqual(reused.status, 0);
+  assert.match(reused.stderr, /identity changed/);
+
+  const allowed = json(run(f, ["kill", "100", "50", "TERM"]));
   assert.deepEqual(allowed, { ok: true, pid: 100, signal: "TERM", dryRun: true });
 });

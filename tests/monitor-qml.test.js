@@ -22,6 +22,7 @@ test("monitor uses plugin-exec for snapshot, detail and kill", () => {
   assert.match(qml, /root\.run\(\["plugin-exec",\s*pluginKey,\s*"snapshot"/);
   assert.match(qml, /root\.run\(\["plugin-exec",\s*pluginKey,\s*"detail"/);
   assert.match(qml, /root\.run\(\["plugin-exec",\s*pluginKey,\s*"kill"/);
+  assert.match(qml, /"kill", String\(pid\), String\(detailData\.startTicks\), signal/);
 });
 
 test("monitor implements keyboard navigation, filter editing and modal escape", () => {
@@ -39,6 +40,18 @@ test("monitor implements keyboard navigation, filter editing and modal escape", 
   assert.match(qml, /selectedPid/);
 });
 
+test("monitor exposes keyboard refresh and sort-direction controls", () => {
+  const qml = source(qmlPath);
+  assert.match(qml, /payload\.text\.toLowerCase\(\) === "r"[\s\S]*refresh\(\)/);
+  assert.match(qml, /payload\.text\.toLowerCase\(\) === "s"[\s\S]*chooseSort\(sortKey\)/);
+  assert.match(qml, /R refresh[\s\S]*S sort direction/);
+});
+
+test("process viewport ends on a complete row", () => {
+  const qml = source(qmlPath);
+  assert.match(qml, /id:\s*processList[\s\S]*height:\s*Style\.space\(230\)/);
+});
+
 test("monitor exposes animated rolling graphs and mouse process actions", () => {
   const qml = source(qmlPath);
   assert.match(qml, /cpuHistory/);
@@ -52,7 +65,7 @@ test("monitor exposes animated rolling graphs and mouse process actions", () => 
 
 test("kill confirmation is visible from the list and preserves the chosen signal", () => {
   const qml = source(qmlPath);
-  assert.match(qml, /visible:\s*detailVisible\s*\|\|\s*confirmVisible/);
+  assert.match(qml, /opacity:\s*detailVisible\s*\|\|\s*confirmVisible\s*\?\s*1\s*:\s*0/);
   assert.match(qml, /function openConfirmation\(pid, choice\)/);
   assert.match(qml, /openConfirmation\(detailData\.pid,\s*actionChoice\)/);
 });
@@ -62,4 +75,17 @@ test("monitor samples only while its active panel is open and updates notch stat
   assert.match(qml, /property bool pluginVisible:/);
   assert.match(qml, /Timer\s*\{[\s\S]*running:\s*root\s*&&\s*root\.opened\s*&&\s*monitor\.pluginVisible/);
   assert.match(qml, /root\.updateNotchData\(pluginKey,\s*notchIcon,\s*notchText\)/);
+});
+
+test("monitor animates detail and confirmation transitions", () => {
+  const qml = source(qmlPath);
+  assert.ok((qml.match(/Behavior on opacity/g) || []).length >= 2);
+  assert.ok((qml.match(/Behavior on scale/g) || []).length >= 2);
+});
+
+test("monitor renders text with the configured Omarchy font", () => {
+  const qml = source(qmlPath);
+  const inlineTextItems = qml.split("\n").filter((line) => /Text\s*\{.*\}/.test(line));
+  const unthemed = inlineTextItems.filter((line) => !/font\.family:\s*Style\.fontFamily/.test(line));
+  assert.deepEqual(unthemed, []);
 });

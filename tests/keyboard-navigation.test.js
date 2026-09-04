@@ -70,6 +70,14 @@ test("number shortcuts select a tab without toggling the panel closed", () => {
   assert.doesNotMatch(panel, /if \(idx < root\.plugins\.length\)\s*\{\s*root\.openPlugin\(/);
 });
 
+test("keyboard catcher regains focus when a plugin editor releases it", () => {
+  const panel = fs.readFileSync(path.join(repoRoot, "Panel.qml"), "utf8");
+  const handler = panel.match(/onBlockedChanged:\s*\{([\s\S]*?)\n\s*\}/);
+  assert.ok(handler, "PanelKeyCatcher must react when editing ends");
+  assert.match(handler[1], /if \(!blocked && root\.opened\)[\s\S]*forceActiveFocus\(\)/);
+  assert.doesNotMatch(handler[1], /Qt\.callLater/, "focus restoration must be synchronous to prevent CardWindow closing");
+});
+
 test("plugin author documentation defines the keyboard contract", () => {
   const readme = fs.readFileSync(path.join(repoRoot, "README.md"), "utf8");
   const template = fs.readFileSync(path.join(repoRoot, "plugins/_template/hello.qml"), "utf8");

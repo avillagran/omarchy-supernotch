@@ -103,6 +103,25 @@ test("Yahoo chart fixtures parse quote metadata and non-null chart points", () =
   ]);
 });
 
+test("asset search finds symbols by company name without adding them", () => {
+  const fixture = path.join(repoRoot, "tests", "markets-search-apple.json");
+  const box = sandbox({ MARKETS_SEARCH_FIXTURE: fixture });
+  const results = run(box, ["search", "apple"]);
+  assert.deepEqual(results, [
+    { symbol: "AAPL", name: "Apple Inc.", exchange: "NASDAQ", type: "Equity" },
+    { symbol: "APLE", name: "Apple Hospitality REIT, Inc.", exchange: "NYSE", type: "Equity" },
+  ]);
+  assert.deepEqual(run(box, ["state"]).watchlist, []);
+});
+
+test("offline asset search fails cleanly without a traceback", () => {
+  const box = sandbox();
+  const result = spawnSync(backend, ["search", "Apple"], { env: box.env, encoding: "utf8" });
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /offline fixture mode/i);
+  assert.doesNotMatch(result.stderr, /Traceback/);
+});
+
 test("refresh uses fixtures, computes portfolio values, and falls back to stale cache", () => {
   const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "markets-fixtures-"));
   fs.copyFileSync(path.join(repoRoot, "tests", "markets-AAPL-5d.json"), path.join(fixtureDir, "markets-AAPL-5d.json"));
@@ -147,4 +166,16 @@ test("localized decimal inputs work and mixed instrument currencies stay separat
   const result = run(box, ["refresh", "--force"]);
   assert.deepEqual(result.assets.map((asset) => asset.currency), ["USD", "EUR"]);
   assert.equal(Object.hasOwn(result, "portfolioTotal"), false);
+});
+
+test("portfolio rejects finite inputs that would produce Infinity or NaN", () => {
+  const box = sandbox();
+  run(box, ["add-symbol", "AAPL"]);
+  for (const value of ["1e308", "Infinity", "NaN"]) {
+    const result = spawnSync(backend, ["add-lot", "AAPL", value, "", "100"], { encoding: "utf8", env: box.env });
+    assert.notEqual(result.status, 0, value);
+  }
+  const raw = spawnSync(backend, ["summary", "AAPL", "1e308"], { encoding: "utf8", env: box.env });
+  assert.notEqual(raw.status, 0);
+  assert.doesNotMatch(raw.stdout, /Infinity|NaN/);
 });

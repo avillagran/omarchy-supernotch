@@ -152,13 +152,15 @@ protected_name() {
 }
 
 kill_process() {
-  local pid=${1:-} signal=${2:-TERM} info name ticks start state ancestor parent command
+  local pid=${1:-} expected_start=${2:-} signal=${3:-TERM} info name ticks start state ancestor parent command
   is_uint "$pid" || fail "invalid pid"
+  is_uint "$expected_start" || fail "invalid process identity"
   (( pid > 1 )) || fail "protected pid"
   [[ $signal == TERM || $signal == KILL ]] || fail "invalid signal"
   [[ -d $PROC_ROOT/$pid ]] || fail "process not found"
   info=$(read_proc_stat "$PROC_ROOT/$pid/stat") || fail "cannot read process stat"
   IFS=$'\t' read -r name ticks start state <<< "$info"
+  [[ $start == "$expected_start" ]] || fail "process identity changed"
   protected_name "$name" && fail "protected process"
   command=$(tr '\0' ' ' < "$PROC_ROOT/$pid/cmdline" 2>/dev/null)
   case $command in *omarchy-supernotch*|*plugins/monitor/backend*) fail "protected helper process" ;; esac
@@ -183,6 +185,6 @@ kill_process() {
 case ${1:-} in
   snapshot) snapshot "${2:-cpu}" "${3:-}" ;;
   detail) detail "${2:-}" ;;
-  kill) kill_process "${2:-}" "${3:-TERM}" ;;
-  *) fail "usage: backend snapshot [cpu|ram|pid|name] [filter] | detail PID | kill PID TERM|KILL" ;;
+  kill) kill_process "${2:-}" "${3:-}" "${4:-TERM}" ;;
+  *) fail "usage: backend snapshot [cpu|ram|pid|name] [filter] | detail PID | kill PID START_TICKS TERM|KILL" ;;
 esac
