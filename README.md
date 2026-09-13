@@ -1,137 +1,97 @@
 # SuperNotch
 
-An **Anclave-style** animated notch for [Omarchy](https://github.com/basecamp/omarchy) (Arch/Hyprland).
-A tiny center pill on the bar **blooms** into a dark, rounded, glassy command center — like the
-Dynamic Island, but for your Linux desktop. Heavily animated, theme-aware, multi-language.
+A theme-aware command center for Omarchy. SuperNotch adds a center bar pill that expands into a keyboard-friendly panel for media, world clocks, weather, clipboard history, news, markets, system monitoring, and settings.
 
-> Omarchy has no hardware notch, so SuperNotch simulates it: a centered bar pill that expands into a
-> top-center card (anchored with `KeyboardPanel` + `centerOnBar`). The external window is your actual media
-> player, tasks file, clipboard and shelf — SuperNotch only reads and controls them.
+![SuperNotch settings and notch layout](preview.png)
 
-## Plugin system (the important part)
+## Highlights
 
-SuperNotch is a **plugin framework**, not a fixed set of tabs. Every tab is a folder under `plugins/`:
+- Centered notch pill with click-to-open behavior, live plugin status, configurable width, center gap, order, and left/right placement.
+- Music controls through MPRIS, including track metadata, seeking, and transport controls.
+- World clocks with timezone search and removal controls.
+- Multi-city weather powered by Open-Meteo, with location management, forecasts, and a compact notch status.
+- Clipboard history with sensitive-content masking and a persistent recording pause toggle.
+- RSS and Atom news reader with saved sources and keyboard navigation.
+- Market watchlist and optional portfolio lots, cached Yahoo Finance data, favorites-only notch ticker, animated price/percentage rotation, overview sparklines, and detail charts.
+- Process monitor with CPU/RAM history, sortable columns, filtering, process details, and guarded TERM/KILL confirmations.
+- All plugin glyphs use the configured Omarchy Nerd Font and surfaces follow Omarchy theme tokens.
 
-```
-plugins/
-  music/      plugin.json + music.qml     ← 🎵 Música
-  tasks/      plugin.json + tasks.qml     ← ✓ Tareas
-  clipboard/  plugin.json + clipboard.qml ← 📋 Portapapeles
-  clock/      plugin.json + clock.qml     ← Relojes mundiales
-  weather/    plugin.json + weather.qml   ← Clima
-  news/       plugin.json + news.qml      ← RSS/Atom + Omarchy
-  markets/    plugin.json + markets.qml   ← Watchlist + cartera
-  monitor/    plugin.json + monitor.qml   ← CPU/RAM + procesos
-  settings/   plugin.json + settings.qml  ← Ajustes
-  _template/  plugin.json + hello.qml     ← copy this to start a new one
-```
+## Screenshots
 
-Each plugin is loaded automatically (no core changes). To **add your own tab**, copy the template:
+### Music
 
-```bash
-cp -r plugins/_template plugins/mything
-# edit plugins/mything/plugin.json  → set key, icon, label{en,es}, ui
-# edit plugins/mything/mything.qml → your UI
-omarchy plugin reload   # or restart the shell
-```
+![Music player with transport controls](assets/music.png)
 
-`plugin.json`:
-```json
-{
-  "key": "mything",
-  "icon": "✦",
-  "label": { "en": "My Thing", "es": "Mi Cosa" },
-  "ui": "mything.qml",
-  "refresh": ["mything-data"]      // helper commands run on open (optional)
-}
-```
+### Clocks
 
-`mything.qml` receives `root` (the Panel) and `pluginKey` (its manifest key). Use:
-- `root.run(["helper-cmd", arg], function(out){ /* out = stdout */ })` — run a shell command.
-- `root.t(root.uiLang, "key")` — translate a string.
-- `root.uiLang` — `"en"` | `"es"`.
-- `Color.*` / `Style.*` — **theme tokens only; never hardcode colors.**
+![Calendar and world clocks](assets/clock.png)
 
-### Optional keyboard contract
+### Weather
 
-Plugins can opt into keyboard navigation by exposing `handleKeyboardAction(action, payload)`. The Panel calls it only on the active plugin while keyboard focus is in the content area:
+![Multi-city weather panel](assets/weather.png)
 
-```qml
-Item {
-  property var root: null
-  property string pluginKey: ""
-  property int selectedIndex: 0
+### News
 
-  // Bind this to every inline editor that must receive raw key events.
-  property bool keyboardNavigationBlocked: editor.activeFocus
+![RSS and Atom news reader](assets/news.png)
 
-  function handleKeyboardAction(action, payload) {
-    if (action === "move") {
-      // payload.dx/payload.dy are -1, 0 or 1 (arrows and h/j/k/l).
-      selectedIndex = Math.max(0, selectedIndex + payload.dy)
-      return true
-    }
-    if (action === "activate") { activate(selectedIndex); return true } // Enter or Space
-    if (action === "delete") { remove(selectedIndex); return true }     // x or X
-    if (action === "text") { search += payload.text; return true }      // other one-character keys
-    if (action === "back") { closeDetailOrConfirmation(); return true } // Esc before panel close
-    return false
-  }
+### Markets
 
-  TextField { id: editor }
-}
-```
+![Market Pulse overview with watchlist charts](assets/markets.png)
 
-Return `true` when an action was consumed. An unhandled upward `"move"` returns keyboard focus to the tabs. `"back"` is dispatched on Esc while content has focus; return `true` to close an internal detail/form/confirmation, or `false` to let Esc close SuperNotch. Other unhandled actions are ignored. The contract is optional, so plugins without the function keep working and remain clickable.
+### System monitor
 
-`keyboardNavigationBlocked` is also optional and defaults to `false`. While it is `true`, `PanelKeyCatcher` does not consume any key, allowing the focused editor to receive text, arrows, Enter, Space, numbers, Tab and Esc normally. The editor should clear focus or set the property back to `false` when editing ends.
-
-Outside editing, Panel-level controls remain reserved: Tab/Shift+Tab cycle tabs and 1–9 select a tab. Esc first offers `"back"` to the active plugin and closes only when it is not consumed. Arrow keys and h/j/k/l navigate tabs until focus enters content. Mouse clicks continue to work independently of this contract.
-
-The panel handles the toolbar, the sliding active-tab indicator, the open/close bloom, crossfades,
-and `centerOnBar` positioning. Your plugin just draws its content and calls `root.run(...)`.
-
-Built-in keyboard-first plugins include **Music**, **Tasks**, **Clipboard**, **Clock**, **Weather**,
-**News**, **Markets**, **Monitor**, and **Settings**.
-
-Plugin-specific keys:
-
-- **Markets:** `↑/↓` selects; `←/→` reorders assets; Enter opens detail/actions; typing in Add searches company names or symbols; `x` confirms removal.
-- **Monitor:** `↑/↓` selects processes; `←/→` changes sort column; `s` reverses sort; `r` refreshes; `/` filters; `x` opens TERM/KILL confirmation.
-- **News:** `↑/↓` selects articles/sources or scrolls the reader; `←/→` changes source/reader action; Enter opens; `x` manages/removes user sources.
-
-## Animation
-
-- The **pill blooms** on hover (eased) and the card **expands** from a small pill into the full panel.
-- Module switches **crossfade**; the active tab indicator **slides**; the music progress bar animates.
-- The card is a glass surface with a soft elevation, rounded corners, and the theme accent.
+![CPU, RAM, and process monitor](assets/monitor.png)
 
 ## Install
 
 ```bash
-omarchy plugin add io.github.avillagran.omarchy-supernotch <git-url>
+omarchy plugin add io.github.avillagran.omarchy-supernotch https://github.com/avillagran/omarchy-supernotch
 ```
 
-The plugin drops a `SUPER + SHIFT + N` keybind automatically. Or click the center pill in the bar.
+The plugin installs `SUPER + SHIFT + N` as its toggle shortcut. You can also click the center pill in the bar.
 
-## Usage
+## Use
 
-- **Click** the center pill (or `SUPER + SHIFT + N`) to open/close.
-- **Click a tab** to switch plugins.
-- **Tab/Shift+Tab** or **Left/Right** (`h`/`l`) switches tabs; **Down** (`j`) enters plugin content.
-- **1–9** jumps directly to a tab.
-- **Esc** returns from an internal plugin view first, then closes the panel.
+- Click the notch pill or press `SUPER + SHIFT + N` to open or close the panel.
+- Click a tab to switch plugins. Press `1` through `9` to jump directly to a tab.
+- Use Tab or Left/Right to move through tabs; Down enters plugin content.
+- Press Escape to leave a plugin subview before closing SuperNotch.
+- In Settings, choose which plugins are displayed in the notch and adjust their order and side.
 
-## Helper
+## Keyboard plugin contract
 
-`bin/omarchy-supernotch` is the local data engine. Try it:
+Plugin authors expose `keyboardNavigationBlocked` only while a text editor owns keyboard input. Each plugin implements `handleKeyboardAction(action)` and returns whether it consumed the action. The panel routes these semantic actions:
+
+- `"move"` for directional navigation.
+- `"activate"` for the selected control.
+- `"delete"` for the selected removable item.
+- `"text"` for editing text content.
+- `"back"` for leaving a subview or cancelling a modal state.
+
+## Plugin layout
+
+Each panel tab lives in `plugins/<key>/` and contains its `plugin.json`, QML user interface, and optional backend. New tabs are discovered automatically.
+
+```text
+plugins/
+  music/       MPRIS player controls
+  clock/       Calendar and world clocks
+  clipboard/   Clipboard history
+  weather/     Multi-city weather
+  news/        RSS and Atom reader
+  markets/     Watchlist and portfolio
+  monitor/     CPU, RAM, and process monitor
+  settings/    SuperNotch preferences
+```
+
+## Development checks
 
 ```bash
-omarchy-supernotch plugins-list        # list installed plugins
-omarchy-supernotch mpris                # now-playing JSON
-omarchy-supernotch clip-list            # clipboard history
-omarchy-supernotch tasks-add "Ship SuperNotch"
+node --test tests/*.test.js
+omarchy plugin validate .
 ```
+
+The acceptance checklist for interactive keyboard testing is in `docs/plugins-keyboard-acceptance.md`.
 
 ## License
 

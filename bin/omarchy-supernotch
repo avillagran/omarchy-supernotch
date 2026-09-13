@@ -117,7 +117,7 @@ plugin_exec() {
   [ -x "$backend" ] || { echo "plugin backend not found: $key" >&2; return 1; }
   "$backend" "$@"
 }
-default_prefs() { echo '{"notchWidth":20,"panelWidth":70,"notchHeight":420,"notchBarWidth":0,"autoHide":true,"clipMask":true,"realNotch":false,"bg":"aurora","bgBlur":0,"bgOpacity":1.0,"notchInset":0,"notchPlugins":[],"pluginOrder":[],"notchSides":{}}'; }
+default_prefs() { echo '{"notchWidth":20,"panelWidth":70,"notchHeight":420,"notchBarWidth":0,"autoHide":true,"clipMask":true,"clipEnabled":true,"realNotch":false,"bg":"aurora","bgBlur":0,"bgOpacity":1.0,"notchInset":0,"notchPlugins":[],"pluginOrder":[],"notchSides":{}}'; }
 read_prefs() {
   local raw; raw=$(read_file_safe "$PREFS")
   if [ -n "$raw" ]; then printf '%s' "$raw" | jq -c . 2>/dev/null || default_prefs
@@ -268,6 +268,9 @@ clip_list() {
   printf '%s' "$raw" | jq -c . 2>/dev/null || echo '[]'
 }
 clip_add() {
+  # Recording can be paused without deleting the retained history. The watcher
+  # may keep invoking this command, so the guard belongs at the write boundary.
+  [ "$(read_prefs | jq -r '.clipEnabled // true')" = "true" ] || return 0
   local txt="$1"; [ -z "$txt" ] && txt=$(wl-paste --no-newline 2>/dev/null || true)
   [ -z "$txt" ] && return 0
   local masked; masked=$(clip_masked "$txt")
@@ -413,6 +416,8 @@ case "${1:-}" in
   clip-list)        clip_list ;;
   clip-add)         clip_add "$2" ;;
   clip-copy)        clip_copy "$2" ;;
+  clip-enabled)     read_prefs | jq -r '.clipEnabled // true' ;;
+  clip-set-enabled) write_pref "clipEnabled" "$2" ;;
   tasks-get)        tasks_get ;;
   tasks-add)        shift; tasks_add "$*" ;;
   tasks-toggle)     tasks_set "$2" true ;;

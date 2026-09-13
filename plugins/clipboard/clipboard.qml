@@ -16,12 +16,18 @@ Item {
     root.run(["clip-list"], function (out) {
       try { list = JSON.parse(out.trim()) } catch (e) { list = [] }
     })
+    root.run(["clip-enabled"], function (out) { m.recordingEnabled = (out || "").trim() !== "false" })
   }
   Component.onCompleted: if (root) load()
   onRootChanged: if (root) load()
   Connections { target: root; function onOpenedChanged() { if (root && root.opened) load() } }
 
   property var list: []
+  property bool recordingEnabled: true
+  function setRecordingEnabled(enabled) {
+    recordingEnabled = enabled
+    if (root) root.run(["clip-set-enabled", enabled ? "true" : "false"])
+  }
   // New-clip counter: how many clips appeared since the card was last opened
   // (i.e. since the user last "reviewed" the clipboard).
   property int seenCount: 0
@@ -44,9 +50,28 @@ Item {
     x: Style.space(20); y: Style.space(20)
     width: parent.width - Style.space(40)
     spacing: Style.space(10)
-    Text {
-      text: root.t(root.uiLang, "clipboard")
-      color: Color.foreground; font.pixelSize: Style.font.body; font.bold: true
+    Row {
+      width: parent.width
+      Text {
+        width: Math.max(0, parent.width - recordingToggle.width - Style.space(12))
+        text: root.t(root.uiLang, "clipboard")
+        elide: Text.ElideRight
+        color: Color.foreground; font.family: Style.fontFamily; font.pixelSize: Style.font.body; font.bold: true
+      }
+      Rectangle {
+        id: recordingToggle
+        width: recordingLabel.implicitWidth + Style.space(16); height: Style.space(26)
+        radius: Style.cornerRadius
+        color: recordingMouse.containsMouse ? Color.menu.selectedBackground : "transparent"
+        border.color: m.recordingEnabled ? Color.accent : Color.popups.border; border.width: 1
+        Text {
+          id: recordingLabel; anchors.centerIn: parent
+          text: m.recordingEnabled ? "󰐊 " + (root.uiLang === "es" ? "Registrando" : "Recording") : "󰏤 " + (root.uiLang === "es" ? "Pausado" : "Paused")
+          color: m.recordingEnabled ? Color.accent : Color.muted
+          font.family: Style.fontFamily; font.pixelSize: Style.font.caption
+        }
+        MouseArea { id: recordingMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: m.setRecordingEnabled(!m.recordingEnabled) }
+      }
     }
     Rectangle { width: parent.width; height: 1; color: Color.popups.border; opacity: 0.5 }
     Flickable {
@@ -62,7 +87,7 @@ Item {
             height: Style.space(34)
             Text {
               anchors.centerIn: parent
-              text: (modelData.sensitive ? "󰌾 " : "• ") +
+              text: (modelData.sensitive ? "󰌾 " : "󰧮 ") +
                     (modelData.txt.length > 46 ? modelData.txt.slice(0, 44) + "…" : modelData.txt)
               color: modelData.sensitive ? Qt.darker(Color.foreground, 1.5) : Color.foreground
               font.family: Style.fontFamily

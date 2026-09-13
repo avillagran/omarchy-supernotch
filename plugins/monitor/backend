@@ -41,6 +41,16 @@ number() {
   awk -v n="${1:-0}" 'BEGIN { printf "%.1f", n + 0 }'
 }
 
+read_rss_kb() {
+  # Avoid spawning awk once per process. On a busy desktop this is the dominant
+  # cost of the initial sample and made the panel look frozen on first open.
+  local key value _
+  while IFS=$' \t' read -r key value _; do
+    [[ $key == "VmRSS:" ]] && { printf '%s\n' "${value:-0}"; return; }
+  done < "$1" 2>/dev/null
+  printf '0\n'
+}
+
 snapshot() {
   local sort_key=${1:-cpu} filter=${2:-} cpu_line total=0 idle=0 cores=0 value
   local prev_total=0 prev_idle=0 total_delta=0 cpu_pct=0 mem_total=0 mem_available=0 mem_used=0 mem_pct=0
@@ -88,7 +98,7 @@ snapshot() {
     pid=${state##*/}
     info=$(read_proc_stat "$state/stat") || continue
     IFS=$'\t' read -r name ticks start _ <<< "$info"
-    rss=$(awk '$1=="VmRSS:" {print $2; found=1; exit} END {if(!found) print 0}' "$state/status" 2>/dev/null)
+    rss=$(read_rss_kb "$state/status")
     rss=${rss:-0}
     ram=0
     if (( mem_total > 0 )); then ram=$(awk -v r="$rss" -v t="$mem_total" 'BEGIN {printf "%.1f",r*100/t}'); fi
@@ -97,7 +107,7 @@ snapshot() {
       cpu=$(awk -v d="$((ticks - ${old_ticks[$pid]:-ticks}))" -v t="$total_delta" -v c="$cores" 'BEGIN {p=d*100*c/t;if(p<0)p=0;printf "%.1f",p}')
     fi
     printf 'PROCESS\t%s\t%s\t%s\n' "$pid" "$start" "$ticks" >> "$current"
-    if [[ -n $lower_filter ]] && [[ $(printf '%s' "$name" | tr '[:upper:]' '[:lower:]') != *"$lower_filter"* ]] && [[ $pid != *"$lower_filter"* ]]; then
+    if [[ -n $lower_filter ]] && [[ ${name,,} != *"$lower_filter"* ]] && [[ $pid != *"$lower_filter"* ]]; then
       continue
     fi
     printf '%s\t%s\t%s\t%s\t%s\n' "$pid" "$name" "$cpu" "$ram" "$rss" >> "$rows"

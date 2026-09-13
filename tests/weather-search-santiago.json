@@ -1,0 +1,25 @@
+{
+  "generationtime_ms": 0.42,
+  "results": [
+    {
+      "id": 3871336,
+      "name": "Santiago",
+      "latitude": -33.45694,
+      "longitude": -70.64827,
+      "elevation": 556,
+      "country_code": "CL",
+      "admin1": "Santiago Metropolitan",
+      "country": "Chile"
+    },
+    {
+      "id": 3628473,
+      "name": "Santiago de León de Caracas",
+      "latitude": 10.48801,
+      "longitude": -66.87919,
+      "elevation": 887,
+      "country_code": "VE",
+      "admin1": "Distrito Federal",
+      "country": "Venezuela"
+    }
+  ]
+}
