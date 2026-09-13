@@ -271,7 +271,12 @@ clip_add() {
   # Recording can be paused without deleting the retained history. The watcher
   # may keep invoking this command, so the guard belongs at the write boundary.
   [ "$(read_prefs | jq -r '.clipEnabled // true')" = "true" ] || return 0
-  local txt="$1"; [ -z "$txt" ] && txt=$(wl-paste --no-newline 2>/dev/null || true)
+  local txt="$1"
+  if [ "$txt" = "--stdin" ]; then
+    txt=$(dd bs=1 count=262144 status=none 2>/dev/null || true)
+  elif [ -z "$txt" ]; then
+    txt=$(wl-paste --no-newline 2>/dev/null || true)
+  fi
   [ -z "$txt" ] && return 0
   local masked; masked=$(clip_masked "$txt")
   local cur; cur=$(clip_list)
@@ -416,6 +421,7 @@ case "${1:-}" in
   clip-list)        clip_list ;;
   clip-add)         clip_add "$2" ;;
   clip-copy)        clip_copy "$2" ;;
+  clip-watch)       exec wl-paste --type text --watch "$SCRIPT_DIR/omarchy-supernotch" clip-add --stdin ;;
   clip-enabled)     read_prefs | jq -r '.clipEnabled // true' ;;
   clip-set-enabled) write_pref "clipEnabled" "$2" ;;
   tasks-get)        tasks_get ;;

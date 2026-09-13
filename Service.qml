@@ -20,4 +20,11 @@ Item {
     running: root.helper !== ""
     command: [root.helper, "install-bind"]
   }
+
+  // Keep a plugin-owned watch process alive so the Clipboard panel receives
+  // new Wayland text selections even while the panel itself is closed.
+  Process {
+    running: root.helper !== ""
+    command: [root.helper, "clip-watch"]
+  }
 }
