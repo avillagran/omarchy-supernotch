@@ -50,6 +50,12 @@ omarchy plugin add io.github.avillagran.omarchy-supernotch https://github.com/av
 
 The plugin installs `SUPER + SHIFT + N` as its toggle shortcut. You can also click the center pill in the bar.
 
+To remove it:
+
+```bash
+omarchy plugin remove io.github.avillagran.omarchy-supernotch
+```
+
 ## Use
 
 - Click the notch pill or press `SUPER + SHIFT + N` to open or close the panel.
