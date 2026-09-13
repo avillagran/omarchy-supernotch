@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """State and no-key market data backend for SuperNotch Markets."""
 
+import fcntl
 import json
 import math
 import os
@@ -8,6 +9,7 @@ import re
 import sys
 import time
 import uuid
+from contextlib import contextmanager
 from datetime import date
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -17,26 +19,69 @@ from urllib.request import Request, urlopen
 STATE_DIR = Path.home() / ".local" / "state" / "omarchy-supernotch"
 STATE_FILE = STATE_DIR / "markets.json"
 CACHE_DIR = STATE_DIR / "markets-cache"
+LOCK_FILE = STATE_DIR / "markets.lock"
 SYMBOL_RE = re.compile(r"^[A-Z0-9][A-Z0-9.^=-]{0,19}$")
 CACHE_TTL = 300
 MAX_SEARCH_DOWNLOAD = 1024 * 1024
 MAX_FINANCIAL_VALUE = 1_000_000_000_000_000
 RANGES = {"1D": ("1d", "5m"), "1W": ("5d", "15m"), "1M": ("1mo", "1d"),
-          "3M": ("3mo", "1d"), "1Y": ("1y", "1d")}
+          "3M": ("3mo", "1d"), "1Y": ("1y", "1d"), "5Y": ("5y", "1wk")}
+MUTATING_COMMANDS = {"add-symbol", "toggle-favorite", "reorder", "add-lot", "edit-lot", "remove-lot", "remove-symbol"}
 
 
 def empty_state():
-    return {"watchlist": [], "holdings": {}}
+    return {"watchlist": [], "favorites": [], "holdings": {}}
+
+
+def validate_state(data):
+    if not isinstance(data, dict) or not isinstance(data.get("watchlist"), list) or not isinstance(data.get("holdings"), dict):
+        raise ValueError("invalid market state; refusing to overwrite it")
+    watchlist = data["watchlist"]
+    if (any(not isinstance(ticker, str) or not SYMBOL_RE.fullmatch(ticker) for ticker in watchlist)
+            or len(set(watchlist)) != len(watchlist)):
+        raise ValueError("invalid market state; refusing to overwrite it")
+    if "favorites" not in data:
+        data["favorites"] = []
+    favorites = data["favorites"]
+    if (not isinstance(favorites, list)
+            or any(not isinstance(ticker, str) or ticker not in watchlist for ticker in favorites)
+            or len(set(favorites)) != len(favorites)):
+        raise ValueError("invalid market state; refusing to overwrite it")
+    for ticker, lots in data["holdings"].items():
+        if not isinstance(ticker, str) or ticker not in watchlist or not isinstance(lots, list):
+            raise ValueError("invalid market state; refusing to overwrite it")
+        lot_ids = set()
+        for lot in lots:
+            if not isinstance(lot, dict) or not isinstance(lot.get("id"), str) or not lot["id"] or lot["id"] in lot_ids:
+                raise ValueError("invalid market state; refusing to overwrite it")
+            try:
+                raw_quantity = lot["quantity"]
+                raw_price = lot.get("price")
+                if (isinstance(raw_quantity, bool) or not isinstance(raw_quantity, (int, float))
+                        or (raw_price is not None and (isinstance(raw_price, bool) or not isinstance(raw_price, (int, float))))):
+                    raise ValueError("holding values must be JSON numbers")
+                quantity = float(raw_quantity)
+                price = None if raw_price is None else float(raw_price)
+                purchase_date = lot.get("date")
+                if purchase_date is not None:
+                    date.fromisoformat(purchase_date)
+            except (KeyError, TypeError, ValueError) as error:
+                raise ValueError("invalid market state; refusing to overwrite it") from error
+            if (not math.isfinite(quantity) or quantity <= 0 or quantity > MAX_FINANCIAL_VALUE
+                    or (price is not None and (not math.isfinite(price) or price <= 0 or price > MAX_FINANCIAL_VALUE))):
+                raise ValueError("invalid market state; refusing to overwrite it")
+            lot_ids.add(lot["id"])
+    return data
 
 
 def load_state():
     try:
         data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
-        if not isinstance(data.get("watchlist"), list) or not isinstance(data.get("holdings"), dict):
-            raise ValueError("invalid state")
-        return data
-    except (OSError, ValueError, json.JSONDecodeError):
+    except FileNotFoundError:
         return empty_state()
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError("invalid market state; refusing to overwrite it") from error
+    return validate_state(data)
 
 
 def save_state(state):
@@ -44,6 +89,17 @@ def save_state(state):
     tmp = STATE_FILE.with_suffix(f".tmp.{os.getpid()}")
     tmp.write_text(json.dumps(state, separators=(",", ":"), allow_nan=False) + "\n", encoding="utf-8")
     os.replace(tmp, STATE_FILE)
+
+
+@contextmanager
+def state_lock():
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    with LOCK_FILE.open("a+", encoding="utf-8") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
 
 def symbol(value):
@@ -92,6 +148,37 @@ def portfolio_summary(lots, current_price):
             "costBasis": cost_basis, "gain": gain, "gainPct": gain_pct}
 
 
+def portfolio_by_currency(assets, portfolio_complete=True):
+    groups = {}
+    for asset in assets:
+        currency = asset.get("currency")
+        if not currency or asset.get("error") or not asset.get("quantity"):
+            continue
+        group = groups.setdefault(currency, {"value": 0.0, "costBasis": 0.0, "complete": True})
+        group["value"] += float(asset.get("marketValue") or 0)
+        if asset.get("costBasis") is None:
+            group["complete"] = False
+        else:
+            group["costBasis"] += float(asset["costBasis"])
+    result = []
+    for currency in sorted(groups):
+        group = groups[currency]
+        complete = group["complete"] and portfolio_complete
+        cost = round(group["costBasis"], 4) if complete else None
+        value = round(group["value"], 4)
+        result.append({"currency": currency, "value": value, "costBasis": cost,
+                       "gain": round(value - cost, 4) if cost is not None else None,
+                       "complete": complete})
+    return result
+
+
+def unavailable_asset(state, ticker, message):
+    return {"symbol": ticker, "value": None, "price": None, "currency": "",
+            "source": "Yahoo Finance", "asOf": None, "fetchedAt": 0,
+            "marketState": "UNKNOWN", "error": str(message), "stale": True,
+            **portfolio_summary(state["holdings"].get(ticker, []), 0)}
+
+
 def chart_result(payload):
     try:
         result = payload["chart"]["result"][0]
@@ -123,11 +210,14 @@ def parse_quote(payload):
         previous = points[0]["value"]
     price, previous = float(price), float(previous)
     change = price - previous
+    market_time = int(meta.get("regularMarketTime") or points[-1]["time"])
+    market_state = str(meta.get("marketState") or "UNKNOWN").upper()
     return {"symbol": str(meta.get("symbol") or ""), "currency": str(meta.get("currency") or ""),
-            "price": round(price, 6), "previousClose": round(previous, 6),
-            "dayChange": round(change, 6),
+            "value": round(price, 6), "price": round(price, 6),
+            "previousClose": round(previous, 6), "dayChange": round(change, 6),
             "dayChangePct": round(change / previous * 100, 4) if previous else None,
-            "marketTime": int(meta.get("regularMarketTime") or points[-1]["time"])}
+            "source": "Yahoo Finance", "asOf": market_time,
+            "marketTime": market_time, "marketState": market_state}
 
 
 def parse_search(payload):
@@ -250,22 +340,55 @@ def asset_snapshot(state, ticker, force=False):
         quote_data = parse_quote(payload)
         chart_data = parse_chart(payload)
         result = {**quote_data, "sparkline": [point["value"] for point in chart_data["points"]],
-                  "stale": stale, "updatedAt": fetched_at}
+                  "stale": stale, "fetchedAt": fetched_at, "updatedAt": fetched_at}
         result.update(portfolio_summary(state["holdings"].get(ticker, []), quote_data["price"]))
         if warning:
             result["warning"] = warning
         return result
     except (OSError, ValueError) as exc:
-        return {"symbol": ticker, "error": str(exc), "stale": False,
-                **portfolio_summary(state["holdings"].get(ticker, []), 0)}
+        return unavailable_asset(state, ticker, exc)
+
+
+def cached_asset_snapshot(state, ticker):
+    path = cache_path(ticker, RANGES["1W"][0])
+    try:
+        cached = read_json(path)
+        fetched_at = int(cached.get("fetchedAt", 0))
+        payload = cached["payload"]
+        quote_data = parse_quote(payload)
+        chart_data = parse_chart(payload)
+        result = {**quote_data, "sparkline": [point["value"] for point in chart_data["points"]],
+                  "stale": int(time.time()) - fetched_at >= CACHE_TTL,
+                  "fetchedAt": fetched_at, "updatedAt": fetched_at}
+        result.update(portfolio_summary(state["holdings"].get(ticker, []), quote_data["price"]))
+        return result
+    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        return unavailable_asset(state, ticker, exc)
+
+
+def pulse_payload(state, assets):
+    favorites = set(state["favorites"])
+    for asset in assets:
+        asset["favorite"] = asset.get("symbol") in favorites
+    unavailable_positions = [asset["symbol"] for asset in assets
+                             if asset.get("error") and asset.get("quantity", 0) > 0]
+    portfolio_complete = not unavailable_positions
+    return {"assets": assets, "watchlist": state["watchlist"], "favorites": state["favorites"],
+            "holdings": state["holdings"],
+            "portfolioByCurrency": portfolio_by_currency(assets, portfolio_complete),
+            "portfolioComplete": portfolio_complete,
+            "unavailablePositions": unavailable_positions}
 
 
 def emit(value):
     print(json.dumps(value, separators=(",", ":"), allow_nan=False))
 
 
-def main(argv):
+def main(argv, locked=False):
     command = argv[0] if argv else "state"
+    if command in MUTATING_COMMANDS and not locked:
+        with state_lock():
+            return main(argv, True)
     state = load_state()
     if command == "state":
         emit(state)
@@ -276,6 +399,16 @@ def main(argv):
         if ticker not in state["watchlist"]:
             state["watchlist"].append(ticker)
             save_state(state)
+        emit(state)
+    elif command == "toggle-favorite":
+        ticker = symbol(argv[1])
+        if ticker not in state["watchlist"]:
+            state["watchlist"].append(ticker)
+        if ticker in state["favorites"]:
+            state["favorites"].remove(ticker)
+        else:
+            state["favorites"].append(ticker)
+        save_state(state)
         emit(state)
     elif command == "reorder":
         ticker = symbol(argv[1])
@@ -324,6 +457,7 @@ def main(argv):
         if state["holdings"].get(ticker) and (len(argv) < 3 or argv[2] != "confirm"):
             raise ValueError("confirmation required for symbol with holdings")
         state["watchlist"] = [item for item in state["watchlist"] if item != ticker]
+        state["favorites"] = [item for item in state["favorites"] if item != ticker]
         state["holdings"].pop(ticker, None)
         save_state(state)
         emit(state)
@@ -337,13 +471,19 @@ def main(argv):
     elif command == "refresh":
         force = "--force" in argv[1:]
         assets = [asset_snapshot(state, ticker, force) for ticker in state["watchlist"]]
-        emit({"assets": assets, "watchlist": state["watchlist"], "holdings": state["holdings"]})
+        emit(pulse_payload(state, assets))
+    elif command == "snapshot":
+        emit(pulse_payload(state, [cached_asset_snapshot(state, ticker) for ticker in state["watchlist"]]))
     elif command == "chart":
         ticker, range_name = symbol(argv[1]), argv[2].upper()
         payload, stale, fetched_at, warning = market_payload(ticker, range_name, "--force" in argv[3:])
         result = parse_chart(payload)
-        result.update({"symbol": ticker, "range": range_name, "currency": parse_quote(payload)["currency"],
-                       "stale": stale, "updatedAt": fetched_at})
+        quote_data = parse_quote(payload)
+        result.update({"symbol": ticker, "range": range_name,
+                       "currency": quote_data["currency"], "source": quote_data["source"],
+                       "asOf": quote_data["asOf"], "fetchedAt": fetched_at,
+                       "marketState": quote_data["marketState"], "stale": stale,
+                       "updatedAt": fetched_at})
         if warning:
             result["warning"] = warning
         emit(result)

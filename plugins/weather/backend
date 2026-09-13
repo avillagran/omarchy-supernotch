@@ -1,0 +1,370 @@
+#!/usr/bin/env python3
+"""Persistent multi-city state and weather data for SuperNotch."""
+
+import json
+import fcntl
+import math
+import os
+import subprocess
+import sys
+import time
+import uuid
+from contextlib import contextmanager
+from pathlib import Path
+from urllib.parse import quote
+from urllib.request import Request, urlopen
+
+STATE_DIR = Path.home() / ".local" / "state" / "omarchy-supernotch"
+STATE_FILE = STATE_DIR / "weather.json"
+OMARCHY_WEATHER_FILE = Path.home() / ".local" / "state" / "omarchy" / "settings" / "weather.json"
+CACHE_FILE = STATE_DIR / "weather-geocode-cache.json"
+LOCK_FILE = STATE_DIR / "weather.lock"
+MAX_DOWNLOAD = 1024 * 1024
+CACHE_TTL = 7 * 24 * 60 * 60
+MAX_CACHE_ENTRIES = 32
+
+
+def emit(value):
+    print(json.dumps(value, separators=(",", ":"), ensure_ascii=False, allow_nan=False))
+
+
+def save_state(state):
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    temporary = STATE_FILE.with_suffix(f".tmp.{os.getpid()}")
+    temporary.write_text(json.dumps(state, separators=(",", ":"), ensure_ascii=False, allow_nan=False) + "\n", encoding="utf-8")
+    os.replace(temporary, STATE_FILE)
+
+
+@contextmanager
+def state_lock():
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    with LOCK_FILE.open("a+", encoding="utf-8") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+
+def city_id():
+    return uuid.uuid4().hex[:12]
+
+
+def migrated_state():
+    cities = []
+    try:
+        source = json.loads(OMARCHY_WEATHER_FILE.read_text(encoding="utf-8"))
+        name = str(source.get("name") or "").strip()
+        latitude = float(source["latitude"])
+        longitude = float(source["longitude"])
+        if name and math.isfinite(latitude) and math.isfinite(longitude):
+            cities.append({"id": city_id(), "name": name, "region": "", "country": "",
+                           "latitude": latitude, "longitude": longitude})
+    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+        pass
+    state = {"version": 1, "activeId": cities[0]["id"] if cities else "", "cities": cities}
+    save_state(state)
+    return state
+
+
+def validate_state(state):
+    if not isinstance(state, dict) or state.get("version") != 1 or not isinstance(state.get("cities"), list):
+        raise ValueError("invalid weather state; refusing to overwrite it")
+    cities = state["cities"]
+    if len(cities) > 8 or not isinstance(state.get("activeId"), str):
+        raise ValueError("invalid weather state; refusing to overwrite it")
+    identifiers = set()
+    for city in cities:
+        try:
+            identifier = city["id"]
+            name = city["name"]
+            raw_latitude = city["latitude"]
+            raw_longitude = city["longitude"]
+            if (isinstance(raw_latitude, bool) or not isinstance(raw_latitude, (int, float))
+                    or isinstance(raw_longitude, bool) or not isinstance(raw_longitude, (int, float))):
+                raise ValueError("coordinates must be JSON numbers")
+            latitude = float(raw_latitude)
+            longitude = float(raw_longitude)
+        except (KeyError, TypeError, ValueError) as error:
+            raise ValueError("invalid weather state; refusing to overwrite it") from error
+        if (not isinstance(identifier, str) or not identifier or identifier in identifiers
+                or not isinstance(name, str) or not name.strip()
+                or not math.isfinite(latitude) or not math.isfinite(longitude)
+                or not -90 <= latitude <= 90 or not -180 <= longitude <= 180):
+            raise ValueError("invalid weather state; refusing to overwrite it")
+        for field in ("region", "country", "countryCode", "displayName"):
+            if field in city and not isinstance(city[field], str):
+                raise ValueError("invalid weather state; refusing to overwrite it")
+        identifiers.add(identifier)
+    if (cities and state["activeId"] not in identifiers) or (not cities and state["activeId"]):
+        raise ValueError("invalid weather state; refusing to overwrite it")
+    return state
+
+
+def load_state():
+    try:
+        state = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return migrated_state()
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError("invalid weather state; refusing to overwrite it") from error
+    return validate_state(state)
+
+
+def read_json_response(request):
+    with urlopen(request, timeout=12) as response:
+        raw = response.read(MAX_DOWNLOAD + 1)
+    if len(raw) > MAX_DOWNLOAD:
+        raise ValueError("weather response exceeds 1 MiB")
+    return json.loads(raw.decode("utf-8"))
+
+
+def search_cities(query):
+    query = query.strip()
+    if len(query) < 2:
+        raise ValueError("search requires at least two characters")
+    cache_key = " ".join(query.split()).casefold()
+    cache = load_cache()
+    cached = cache["entries"].get(cache_key)
+    if cached and int(time.time()) - int(cached.get("fetchedAt", 0)) < CACHE_TTL:
+        return cached.get("results") or []
+    try:
+        fixture = os.environ.get("WEATHER_SEARCH_FIXTURE")
+        if fixture:
+            payload = json.loads(Path(fixture).read_text(encoding="utf-8"))
+        elif os.environ.get("WEATHER_OFFLINE") == "1":
+            raise OSError("offline fixture mode")
+        else:
+            url = "https://geocoding-api.open-meteo.com/v1/search?count=8&language=en&format=json&name=" + quote(query, safe="")
+            payload = read_json_response(Request(url, headers={"User-Agent": "SuperNotch/1.0", "Accept": "application/json"}))
+        results = parse_search_results(payload)
+    except (OSError, ValueError, json.JSONDecodeError):
+        if cached:
+            return cached.get("results") or []
+        raise
+    cache["entries"][cache_key] = {"fetchedAt": int(time.time()), "results": results}
+    save_cache(cache)
+    return results
+
+
+def parse_search_results(payload):
+    results = []
+    for item in payload.get("results") or []:
+        if len(results) >= 8:
+            break
+        try:
+            name = str(item["name"]).strip()
+            region = str(item.get("admin1") or "").strip()
+            country = str(item.get("country") or "").strip()
+            latitude = float(item["latitude"])
+            longitude = float(item["longitude"])
+            if not name or not math.isfinite(latitude) or not math.isfinite(longitude):
+                continue
+        except (KeyError, TypeError, ValueError):
+            continue
+        parts = [part for part in (name, region, country) if part]
+        results.append({"name": name, "region": region, "country": country,
+                        "countryCode": str(item.get("country_code") or "").strip(),
+                        "latitude": latitude, "longitude": longitude,
+                        "displayName": ", ".join(parts)})
+    return results
+
+
+def load_cache():
+    try:
+        cache = json.loads(CACHE_FILE.read_text(encoding="utf-8"))
+        if not isinstance(cache.get("entries"), dict):
+            raise ValueError("invalid cache")
+        return cache
+    except (OSError, ValueError, json.JSONDecodeError):
+        return {"version": 1, "entries": {}}
+
+
+def save_cache(cache):
+    entries = sorted(cache["entries"].items(), key=lambda item: int(item[1].get("fetchedAt", 0)), reverse=True)
+    cache = {"version": 1, "entries": dict(entries[:MAX_CACHE_ENTRIES])}
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    temporary = CACHE_FILE.with_suffix(f".tmp.{os.getpid()}")
+    temporary.write_text(json.dumps(cache, separators=(",", ":"), ensure_ascii=False, allow_nan=False) + "\n", encoding="utf-8")
+    os.replace(temporary, CACHE_FILE)
+
+
+def forecast(latitude_value, longitude_value):
+    try:
+        latitude = float(latitude_value)
+        longitude = float(longitude_value)
+    except (TypeError, ValueError):
+        raise ValueError("invalid forecast coordinates") from None
+    if not math.isfinite(latitude) or not math.isfinite(longitude) or not -90 <= latitude <= 90 or not -180 <= longitude <= 180:
+        raise ValueError("invalid forecast coordinates")
+    fixture = os.environ.get("WEATHER_FORECAST_FIXTURE")
+    if fixture:
+        return json.loads(Path(fixture).read_text(encoding="utf-8"))
+    if os.environ.get("WEATHER_OFFLINE") == "1":
+        raise OSError("offline fixture mode")
+    url = ("https://api.open-meteo.com/v1/forecast"
+           f"?latitude={quote(str(latitude), safe='')}&longitude={quote(str(longitude), safe='')}"
+           "&daily=weather_code,temperature_2m_max,temperature_2m_min"
+           "&current=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,weather_code,is_day"
+           "&forecast_days=4&timezone=auto")
+    return read_json_response(Request(url, headers={"User-Agent": "SuperNotch/1.0", "Accept": "application/json"}))
+
+
+def validated_city(raw):
+    data = json.loads(raw)
+    if not isinstance(data, dict):
+        raise ValueError("invalid city")
+    for field in ("name", "region", "country", "countryCode", "displayName"):
+        if field in data and data[field] is not None and not isinstance(data[field], str):
+            raise ValueError("invalid city")
+    raw_latitude = data.get("latitude")
+    raw_longitude = data.get("longitude")
+    if (isinstance(raw_latitude, bool) or not isinstance(raw_latitude, (int, float))
+            or isinstance(raw_longitude, bool) or not isinstance(raw_longitude, (int, float))):
+        raise ValueError("invalid city coordinates")
+    name = str(data.get("name") or "").strip()
+    region = str(data.get("region") or "").strip()
+    country = str(data.get("country") or "").strip()
+    country_code = str(data.get("countryCode") or "").strip().upper()
+    latitude = float(raw_latitude)
+    longitude = float(raw_longitude)
+    if not name or not math.isfinite(latitude) or not math.isfinite(longitude):
+        raise ValueError("invalid city")
+    if not -90 <= latitude <= 90 or not -180 <= longitude <= 180:
+        raise ValueError("invalid city coordinates")
+    display_name = str(data.get("displayName") or "").strip()
+    if not display_name:
+        display_name = ", ".join(part for part in (name, region, country) if part)
+    return {"id": city_id(), "name": name, "region": region, "country": country,
+            "countryCode": country_code, "latitude": latitude, "longitude": longitude,
+            "displayName": display_name}
+
+
+def city_index(state, identifier):
+    for index, city in enumerate(state["cities"]):
+        if city.get("id") == identifier:
+            return index
+    raise ValueError("city not found")
+
+
+def sync_omarchy(city):
+    command = os.environ.get("WEATHER_LOCATION_COMMAND", "omarchy-weather-location")
+    coordinates = f'{city["latitude"]},{city["longitude"]}'
+    try:
+        subprocess.run([command, "--set", city["name"], coordinates], check=True,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, timeout=12)
+    except (OSError, subprocess.SubprocessError) as error:
+        raise OSError(f"could not sync Omarchy weather location: {error}") from None
+
+
+def distance_km(first, second):
+    radius = 6371.0
+    lat1, lat2 = math.radians(first["latitude"]), math.radians(second["latitude"])
+    delta_lat = lat2 - lat1
+    delta_lon = math.radians(second["longitude"] - first["longitude"])
+    haversine = math.sin(delta_lat / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(delta_lon / 2) ** 2
+    return radius * 2 * math.atan2(math.sqrt(haversine), math.sqrt(1 - haversine))
+
+
+def add_city(state, raw, confirmed=False):
+    if len(state["cities"]) >= 8:
+        raise ValueError("weather supports at most eight cities")
+    city = validated_city(raw)
+    nearest = None
+    nearest_distance = None
+    for existing in state["cities"]:
+        distance = distance_km(city, existing)
+        if nearest_distance is None or distance < nearest_distance:
+            nearest, nearest_distance = existing, distance
+    if nearest_distance is not None and nearest_distance <= 0.1:
+        return {"duplicate": True, "requiresConfirmation": False, "existing": nearest,
+                "message": "That location is already in the weather list"}
+    if nearest_distance is not None and nearest_distance <= 10 and not confirmed:
+        return {"duplicate": False, "requiresConfirmation": True, "existing": nearest,
+                "candidate": city, "message": "A nearby city is already in the weather list"}
+    state["cities"].append(city)
+    if not state["activeId"]:
+        sync_omarchy(city)
+        state["activeId"] = city["id"]
+    save_state(state)
+    return state
+
+
+def activate_city(state, identifier):
+    index = city_index(state, identifier)
+    sync_omarchy(state["cities"][index])
+    state["activeId"] = identifier
+    save_state(state)
+    return state
+
+
+def reorder_city(state, identifier, delta):
+    current = city_index(state, identifier)
+    target = max(0, min(len(state["cities"]) - 1, current + int(delta)))
+    if target != current:
+        state["cities"].insert(target, state["cities"].pop(current))
+        save_state(state)
+    return state
+
+
+def remove_city(state, identifier):
+    current = city_index(state, identifier)
+    state["cities"].pop(current)
+    if state["activeId"] == identifier:
+        state["activeId"] = state["cities"][min(current, len(state["cities"]) - 1)]["id"] if state["cities"] else ""
+        if state["cities"]:
+            sync_omarchy(state["cities"][min(current, len(state["cities"]) - 1)])
+    save_state(state)
+    return state
+
+
+def replace_city(state, identifier, raw, confirmed=False):
+    current = city_index(state, identifier)
+    replacement = validated_city(raw)
+    replacement["id"] = identifier
+    others = [city for city in state["cities"] if city.get("id") != identifier]
+    nearest = min(((distance_km(replacement, city), city) for city in others), default=None, key=lambda item: item[0])
+    if nearest and nearest[0] <= 0.1:
+        return {"duplicate": True, "requiresConfirmation": False, "existing": nearest[1],
+                "message": "That location is already in the weather list"}
+    if nearest and nearest[0] <= 10 and not confirmed:
+        return {"duplicate": False, "requiresConfirmation": True, "existing": nearest[1],
+                "candidate": replacement, "message": "A nearby city is already in the weather list"}
+    if state["activeId"] == identifier:
+        sync_omarchy(replacement)
+    state["cities"][current] = replacement
+    save_state(state)
+    return state
+
+
+def main(argv):
+    command = argv[0] if argv else "state"
+    if command == "search":
+        emit(search_cities(argv[1] if len(argv) > 1 else ""))
+    elif command == "forecast":
+        emit(forecast(argv[1], argv[2]))
+    else:
+        with state_lock():
+            state = load_state()
+            if command == "state":
+                emit(state)
+            elif command == "add-city":
+                emit(add_city(state, argv[1], len(argv) > 2 and argv[2] == "confirm"))
+            elif command == "replace-city":
+                emit(replace_city(state, argv[1], argv[2], len(argv) > 3 and argv[3] == "confirm"))
+            elif command == "activate":
+                emit(activate_city(state, argv[1]))
+            elif command == "reorder":
+                emit(reorder_city(state, argv[1], argv[2]))
+            elif command == "remove":
+                emit(remove_city(state, argv[1]))
+            else:
+                raise ValueError(f"unknown command: {command}")
+
+
+if __name__ == "__main__":
+    try:
+        main(sys.argv[1:])
+    except (ValueError, IndexError, OSError) as error:
+        print(str(error), file=sys.stderr)
+        raise SystemExit(2)

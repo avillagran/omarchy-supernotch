@@ -28,7 +28,7 @@ Item {
   Column {
     anchors.centerIn: parent
     spacing: Style.space(12)
-    Text { text: "✦"; color: Color.accent; font.pixelSize: Style.font.display; anchors.horizontalCenter: parent.horizontalCenter }
+    Text { text: "󰐕"; color: Color.accent; font.pixelSize: Style.font.display; anchors.horizontalCenter: parent.horizontalCenter }
     Text {
       text: root ? root.t(root.uiLang, "helloMsg") : "Hello"
       color: Color.foreground; font.pixelSize: Style.font.subtitle; font.bold: true

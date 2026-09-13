@@ -30,7 +30,7 @@ Item {
   property int actionChoice: 0
   property string resultMessage: ""
   property bool loading: false
-  property bool pluginVisible: monitor.visible && (!monitor.parent || monitor.parent.visible)
+  property bool pluginVisible: root && root.opened && root.activePluginItem === monitor
   property bool keyboardNavigationBlocked: filterField.activeFocus
   property string notchIcon: "󰍛"
   property string notchText: "CPU 0% · RAM 0%"
@@ -89,7 +89,9 @@ Item {
         memoryUsedKb = data.memory.usedKb || 0
         loadAverage = data.load || [0, 0, 0]
         uptimeSeconds = data.uptimeSeconds || 0
-        processes = sortedRows(data.processes || [])
+        // The backend already returns the requested ordering. Keep its first
+        // response intact instead of doing a second JS sort while the card maps.
+        processes = data.processes || []
         cpuHistory = appendHistory(cpuHistory, cpuPercent)
         ramHistory = appendHistory(ramHistory, ramPercent)
         cpuGraph.requestPaint(); ramGraph.requestPaint()

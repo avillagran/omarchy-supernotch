@@ -3,7 +3,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
-const { spawnSync } = require("node:child_process");
+const { spawn, spawnSync } = require("node:child_process");
 
 const repoRoot = path.resolve(__dirname, "..");
 const backend = path.join(repoRoot, "plugins", "markets", "backend");
@@ -20,6 +20,20 @@ function run(box, args, expectedStatus = 0) {
   return result.stdout.trim() ? JSON.parse(result.stdout) : null;
 }
 
+function runAsync(box, args) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(backend, args, { env: box.env });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", chunk => { stdout += chunk; });
+    child.stderr.on("data", chunk => { stderr += chunk; });
+    child.on("error", reject);
+    child.on("close", status => status === 0 ? resolve(JSON.parse(stdout)) : reject(new Error(stderr || `exit ${status}`)));
+  });
+}
+
 test("watchlist additions persist under the SuperNotch state directory", () => {
   const box = sandbox();
   run(box, ["add-symbol", " aapl "]);
@@ -32,6 +46,17 @@ test("watchlist additions persist under the SuperNotch state directory", () => {
 
   const saved = JSON.parse(fs.readFileSync(path.join(box.home, ".local", "state", "omarchy-supernotch", "markets.json"), "utf8"));
   assert.deepEqual(saved.watchlist, ["AAPL", "MSFT"]);
+});
+
+test("favorites persist independently while remaining watchlisted", () => {
+  const box = sandbox();
+  run(box, ["add-symbol", "AAPL"]);
+  assert.deepEqual(run(box, ["toggle-favorite", "AAPL"]).favorites, ["AAPL"]);
+  assert.deepEqual(run(box, ["state"]), {
+    watchlist: ["AAPL"], favorites: ["AAPL"], holdings: {},
+  });
+  assert.deepEqual(run(box, ["toggle-favorite", "AAPL"]).favorites, []);
+  assert.deepEqual(run(box, ["state"]).watchlist, ["AAPL"]);
 });
 
 test("symbols are validated before persistence", () => {
@@ -93,8 +118,10 @@ test("Yahoo chart fixtures parse quote metadata and non-null chart points", () =
   const quoteFile = path.join(repoRoot, "tests", "markets-AAPL-5d.json");
   const chartFile = path.join(repoRoot, "tests", "markets-AAPL-1mo.json");
   assert.deepEqual(run(box, ["parse-quote", quoteFile]), {
-    symbol: "AAPL", currency: "USD", price: 189.25, previousClose: 187.5,
-    dayChange: 1.75, dayChangePct: 0.9333, marketTime: 1757000000,
+    symbol: "AAPL", currency: "USD", value: 189.25, price: 189.25,
+    previousClose: 187.5, dayChange: 1.75, dayChangePct: 0.9333,
+    source: "Yahoo Finance", asOf: 1757000000, marketTime: 1757000000,
+    marketState: "UNKNOWN",
   });
   assert.deepEqual(run(box, ["parse-chart", chartFile]).points, [
     { time: 1754000000, value: 181.5 },
@@ -142,13 +169,71 @@ test("refresh uses fixtures, computes portfolio values, and falls back to stale 
   assert.match(result.assets[0].warning, /cached/i);
 });
 
+test("snapshot returns cached data immediately with provenance and freshness metadata", () => {
+  const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "markets-snapshot-fixtures-"));
+  fs.copyFileSync(path.join(repoRoot, "tests", "markets-AAPL-5d.json"), path.join(fixtureDir, "markets-AAPL-5d.json"));
+  const box = sandbox({ MARKETS_FIXTURE_DIR: fixtureDir });
+  run(box, ["add-symbol", "AAPL"]);
+  run(box, ["refresh", "--force"]);
+  fs.rmSync(path.join(fixtureDir, "markets-AAPL-5d.json"));
+
+  const result = run(box, ["snapshot"]);
+  assert.equal(result.assets[0].value, 189.25);
+  assert.equal(result.assets[0].source, "Yahoo Finance");
+  assert.equal(result.assets[0].asOf, 1757000000);
+  assert.equal(result.assets[0].marketState, "UNKNOWN");
+  assert.equal(typeof result.assets[0].fetchedAt, "number");
+  assert.equal(result.assets[0].stale, false);
+});
+
+test("unavailable assets retain the complete metadata schema", () => {
+  const box = sandbox();
+  run(box, ["add-symbol", "AAPL"]);
+  const asset = run(box, ["snapshot"]).assets[0];
+  assert.deepEqual(Object.fromEntries([
+    "value", "currency", "source", "asOf", "fetchedAt", "stale", "marketState",
+  ].map((key) => [key, Object.hasOwn(asset, key)])), {
+    value: true, currency: true, source: true, asOf: true,
+    fetchedAt: true, stale: true, marketState: true,
+  });
+});
+
+test("portfolio totals disclose unavailable held positions", () => {
+  const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "markets-partial-fixtures-"));
+  fs.copyFileSync(path.join(repoRoot, "tests", "markets-AAPL-5d.json"), path.join(fixtureDir, "markets-AAPL-5d.json"));
+  const box = sandbox({ MARKETS_FIXTURE_DIR: fixtureDir });
+  run(box, ["add-symbol", "AAPL"]);
+  run(box, ["add-symbol", "MSFT"]);
+  run(box, ["add-lot", "AAPL", "2", "", "150"]);
+  run(box, ["add-lot", "MSFT", "1", "", "200"]);
+  const result = run(box, ["refresh", "--force"]);
+  assert.equal(result.portfolioComplete, false);
+  assert.deepEqual(result.unavailablePositions, ["MSFT"]);
+  assert.equal(result.portfolioByCurrency[0].complete, false);
+});
+
 test("detail chart supports named ranges without a network dependency", () => {
   const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "markets-chart-fixtures-"));
   fs.copyFileSync(path.join(repoRoot, "tests", "markets-AAPL-1mo.json"), path.join(fixtureDir, "markets-AAPL-1mo.json"));
   const box = sandbox({ MARKETS_FIXTURE_DIR: fixtureDir });
   const chart = run(box, ["chart", "AAPL", "1M", "--force"]);
   assert.equal(chart.range, "1M");
+  assert.equal(chart.symbol, "AAPL");
+  assert.equal(chart.currency, "USD");
+  assert.equal(chart.source, "Yahoo Finance");
+  assert.equal(chart.asOf, 1757000000);
+  assert.equal(typeof chart.fetchedAt, "number");
+  assert.equal(chart.marketState, "UNKNOWN");
   assert.equal(chart.stale, false);
+  assert.equal(chart.points.length, 3);
+});
+
+test("five-year detail range maps to a cached provider fixture", () => {
+  const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "markets-five-year-fixtures-"));
+  fs.copyFileSync(path.join(repoRoot, "tests", "markets-AAPL-1mo.json"), path.join(fixtureDir, "markets-AAPL-5y.json"));
+  const box = sandbox({ MARKETS_FIXTURE_DIR: fixtureDir });
+  const chart = run(box, ["chart", "AAPL", "5Y", "--force"]);
+  assert.equal(chart.range, "5Y");
   assert.equal(chart.points.length, 3);
 });
 
@@ -166,6 +251,9 @@ test("localized decimal inputs work and mixed instrument currencies stay separat
   const result = run(box, ["refresh", "--force"]);
   assert.deepEqual(result.assets.map((asset) => asset.currency), ["USD", "EUR"]);
   assert.equal(Object.hasOwn(result, "portfolioTotal"), false);
+  assert.deepEqual(result.portfolioByCurrency, [
+    { currency: "EUR", value: 283.875, costBasis: 150.375, gain: 133.5, complete: true },
+  ]);
 });
 
 test("portfolio rejects finite inputs that would produce Infinity or NaN", () => {
@@ -178,4 +266,36 @@ test("portfolio rejects finite inputs that would produce Infinity or NaN", () =>
   const raw = spawnSync(backend, ["summary", "AAPL", "1e308"], { encoding: "utf8", env: box.env });
   assert.notEqual(raw.status, 0);
   assert.doesNotMatch(raw.stdout, /Infinity|NaN/);
+});
+
+test("corrupt portfolio state is never overwritten by a mutation", () => {
+  const corruptStates = [
+    "{not-json\n",
+    "[]\n",
+    JSON.stringify({ watchlist: ["AAPL"], favorites: [], holdings: { AAPL: "broken" } }),
+    JSON.stringify({ watchlist: ["AAPL"], favorites: [], holdings: { AAPL: [{ id: "x", quantity: true, price: 1, date: null }] } }),
+    JSON.stringify({ watchlist: ["AAPL"], favorites: { AAPL: true }, holdings: {} }),
+  ];
+  for (const corrupt of corruptStates) {
+    const box = sandbox();
+    const stateFile = path.join(box.home, ".local", "state", "omarchy-supernotch", "markets.json");
+    fs.mkdirSync(path.dirname(stateFile), { recursive: true });
+    fs.writeFileSync(stateFile, corrupt);
+    const result = spawnSync(backend, ["toggle-favorite", "AAPL"], { encoding: "utf8", env: box.env });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /invalid market state/i);
+    assert.doesNotMatch(result.stderr, /Traceback/);
+    assert.equal(fs.readFileSync(stateFile, "utf8"), corrupt);
+  }
+});
+
+test("concurrent portfolio mutations serialize without losing updates", async () => {
+  for (let trial = 0; trial < 10; trial++) {
+    const box = sandbox();
+    await Promise.all([
+      runAsync(box, ["add-symbol", "AAPL"]),
+      runAsync(box, ["add-symbol", "MSFT"]),
+    ]);
+    assert.deepEqual(new Set(run(box, ["state"]).watchlist), new Set(["AAPL", "MSFT"]), `trial ${trial}`);
+  }
 });

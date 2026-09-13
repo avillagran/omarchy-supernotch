@@ -9,5 +9,5 @@
   "ui": "weather.qml",
   "refresh": [],
   "order": 6,
-  "preferredHeight": 220
+  "preferredHeight": 430
 }

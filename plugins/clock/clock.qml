@@ -84,7 +84,9 @@ Item {
   // Notch pill mini-status: time, alternating with date.
   property var now: new Date()
   property bool showDate: false
-  Timer { interval: 1000; running: true; repeat: true; onTriggered: { m.now = new Date(); m.pushNotch() } }
+  // Minute precision matches the rendered HH:MM and avoids re-laying out the
+  // entire notch once per second.
+  Timer { interval: 30000; running: true; repeat: true; onTriggered: { m.now = new Date(); m.pushNotch() } }
   Timer { id: flip; interval: 2000; running: true; repeat: true; onTriggered: { m.showDate = !m.showDate; m.pushNotch() } }
 
   property string notchIcon: ""
@@ -194,7 +196,10 @@ Item {
                 spacing: Style.space(2)
 
                 Item {
-                  width: cityTime.implicitWidth
+                  // The remove affordance belongs to this item's hit box. Keeping it
+                  // inside the hover region prevents it disappearing while moving from
+                  // the time label to the button.
+                  width: cityTime.implicitWidth + (!modelData.local ? Style.space(28) : 0)
                   height: cityTime.implicitHeight
                   anchors.horizontalCenter: parent.horizontalCenter
 
@@ -213,7 +218,8 @@ Item {
                     anchors.left: cityTime.right
                     anchors.leftMargin: Style.space(4)
                     anchors.verticalCenter: cityTime.verticalCenter
-                    text: "×"
+                    z: 2
+                    text: "󰅖"
                     visible: !modelData.local && clockHover.containsMouse
                     color: Style.hoverStateColor(Color.foreground, Color.accent)
                     font.family: Style.fontFamily
@@ -221,6 +227,8 @@ Item {
                     MouseArea {
                       anchors.fill: parent
                       anchors.margins: -Style.space(4)
+                      hoverEnabled: true
+                      cursorShape: Qt.PointingHandCursor
                       onClicked: m.removeClock(modelData.tz)
                     }
                   }
@@ -228,6 +236,7 @@ Item {
                   MouseArea {
                     id: clockHover
                     anchors.fill: parent
+                    z: 0
                     hoverEnabled: true
                   }
                 }
@@ -246,7 +255,7 @@ Item {
             // "+" add-city chip
             Text {
               anchors.verticalCenter: parent.verticalCenter
-              text: "+"
+              text: "󰐕"
               color: addMouse.containsMouse ? Style.hoverStateColor(Color.foreground, Color.accent) : Qt.darker(Color.foreground, 1.5)
               font.family: Style.fontFamily
               font.pixelSize: Style.font.title

@@ -313,11 +313,11 @@ Item {
         width: parent.width; spacing: Style.space(6)
         Repeater {
           model: [
-            { key: "aurora", icon: "🌌" },
-            { key: "sand",   icon: "🏜" },
-            { key: "cubes",  icon: "🔲" },
-            { key: "nebula", icon: "✦" },
-            { key: "waves",  icon: "🌊" }
+            { key: "aurora", icon: "󰛨" },
+            { key: "sand",   icon: "󰐭" },
+            { key: "cubes",  icon: "󰆧" },
+            { key: "nebula", icon: "󰇄" },
+            { key: "waves",  icon: "󰖌" }
           ]
           Rectangle {
             width: Style.space(44); height: Style.space(34); radius: Style.space(8)
@@ -327,7 +327,7 @@ Item {
             Behavior on color { ColorAnimation { duration: 160 } }
             Text {
               anchors.centerIn: parent; text: modelData.icon
-              font.pixelSize: Style.font.bodySmall; opacity: (root && root.bg === modelData.key) ? 1 : 0.7
+              font.family: Style.fontFamily; font.pixelSize: Style.font.bodySmall; opacity: (root && root.bg === modelData.key) ? 1 : 0.7
             }
             MouseArea {
               anchors.fill: parent; cursorShape: Qt.PointingHandCursor

@@ -25,7 +25,7 @@ BarWidget {
     : Math.max(240, (root.realNotchW > 0 ? root.realNotchW * 3.0 : 0))
 
   // Live content pushed from Panel.qml:
-  property string barIcon: "♪"
+  property string barIcon: "󰝚"
   property string barInfo: ""
   property bool barActive: false
   property real barPulse: 1
@@ -68,7 +68,12 @@ BarWidget {
     proc.command = [root.helper].concat(args); proc.running = true
     return proc
   }
-  function clickToggle() { run(["toggle"], function () {}) }
+  function clickToggle() {
+    // Directly toggle the loaded panel first. This avoids a race between the
+    // layer-presence probe in the helper and a just-mapped CardWindow.
+    if (panelLoader.item && panelLoader.item.toggle) panelLoader.item.toggle()
+    else run(["toggle"], function () {})
+  }
 
   implicitWidth: Math.max(240, pill.width)
   implicitHeight: pill.height

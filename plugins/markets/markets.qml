@@ -1,3 +1,5 @@
+pragma ComponentBehavior: Bound
+
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
@@ -10,13 +12,24 @@ Item {
   property string pluginKey: ""
   width: parent ? parent.width : 100
   implicitHeight: Style.space(560)
+  readonly property bool pluginVisible: root && root.activePluginItem === m
 
-  property string mode: "list"
-  property string previousMode: "list"
+  property string mode: "pulse"
+  property string previousMode: "pulse"
   property bool loading: false
+  property bool refreshing: false
   property string errorMessage: ""
   property var assets: []
+  property var favorites: []
   property var holdings: ({})
+  readonly property bool hasPositions: {
+    for (var ticker in holdings)
+      if ((holdings[ticker] || []).length > 0) return true
+    return false
+  }
+  property var portfolioByCurrency: []
+  property bool portfolioComplete: true
+  property var unavailablePositions: []
   property var searchResults: []
   property int searchSelection: 0
   property bool searching: false
@@ -25,6 +38,8 @@ Item {
   property string selectedRange: "1M"
   property var chartPoints: []
   property bool chartStale: false
+  property var chartMetadata: ({})
+  property string chartError: ""
   property int listSelection: 0
   property int detailSelection: 0
   property int formSelection: 0
@@ -34,11 +49,20 @@ Item {
   property string removalKind: ""
   property string removalId: ""
   property string removalLabel: ""
+  property string removalSymbol: ""
+  property int actionSelection: 0
+  property int refreshGeneration: 0
+  property int chartGeneration: 0
   property string notchIcon: "󰄪"
+  property bool notchShowValue: false
+  property var notchFavoriteAssets: []
   property string notchText: assets.length > 0 && !assets[0].error
                                       ? assets[0].symbol + " " + formatPrice(assets[0].price, assets[0].currency)
                                       : assets.length + " assets"
-  readonly property var ranges: ["1D", "1W", "1M", "3M", "1Y"]
+  readonly property var ranges: ["1D", "1W", "1M", "1Y", "5Y"]
+  readonly property bool compact: width < Style.space(680)
+  readonly property bool reducedMotion: root && root.reducedMotion === true
+  readonly property int motionDuration: reducedMotion ? 0 : 180
   property bool keyboardNavigationBlocked: symbolField.activeFocus || quantityField.activeFocus || dateField.activeFocus || priceField.activeFocus
 
   component Sparkline: Canvas {
@@ -54,7 +78,29 @@ Item {
       var low = Math.min.apply(Math, values)
       var high = Math.max.apply(Math, values)
       var span = Math.max(0.000001, high - low)
-      ctx.strokeStyle = Color.accent
+      var rising = values[values.length - 1] >= values[0]
+      var tone = rising ? Color.accent : Color.foreground
+      // A quiet grid plus translucent area gives the chart depth without
+      // hard-coded colors, so it remains native to every Omarchy theme.
+      ctx.strokeStyle = Color.popups.border
+      ctx.lineWidth = 1
+      ctx.globalAlpha = 0.55
+      for (var g = 1; g < 4; ++g) {
+        var gy = g * height / 4
+        ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(width, gy); ctx.stroke()
+      }
+      ctx.globalAlpha = 0.16
+      ctx.fillStyle = tone
+      ctx.beginPath()
+      for (var areaIndex = 0; areaIndex < values.length; areaIndex++) {
+        var areaX = areaIndex * width / Math.max(1, values.length - 1)
+        var areaY = height - Style.space(3) - ((values[areaIndex] - low) / span) * (height - Style.space(6))
+        if (areaIndex === 0) ctx.moveTo(areaX, areaY)
+        else ctx.lineTo(areaX, areaY)
+      }
+      ctx.lineTo(width, height); ctx.lineTo(0, height); ctx.closePath(); ctx.fill()
+      ctx.globalAlpha = 1
+      ctx.strokeStyle = tone
       ctx.lineWidth = large ? 2.5 : 1.5
       ctx.beginPath()
       for (var i = 0; i < values.length; i++) {
@@ -82,26 +128,100 @@ Item {
     }
   }
 
+  function captureViewContext() {
+    var ticker = selectedSymbol
+    if (!ticker && listSelection >= 2 && assets[listSelection - 2]) ticker = assets[listSelection - 2].symbol
+    return { symbol: ticker, contentY: assetScroll ? assetScroll.contentY : 0 }
+  }
+
+  function restoreViewContext(context) {
+    if (!context || mode !== "pulse") return
+    if (context.symbol) {
+      selectedSymbol = context.symbol
+      for (var i = 0; i < assets.length; i++)
+        if (assets[i].symbol === context.symbol) { listSelection = i + 2; break }
+    }
+    Qt.callLater(function () {
+      if (!assetScroll) return
+      assetScroll.contentY = Math.max(0, Math.min(Math.max(0, assetScroll.contentHeight - assetScroll.height), context.contentY || 0))
+    })
+  }
+
+  function applyPulse(result, context) {
+    var incoming = result.assets || []
+    var allFailed = incoming.length > 0 && incoming.every(function (asset) { return !!asset.error })
+    if (!allFailed || assets.length === 0) assets = incoming
+    favorites = result.favorites || []
+    holdings = result.holdings || ({})
+    if (!allFailed) portfolioByCurrency = result.portfolioByCurrency || []
+    portfolioComplete = result.portfolioComplete !== false
+    unavailablePositions = result.unavailablePositions || []
+    if (allFailed) errorMessage = "Unable to refresh prices · preserving the last snapshot"
+    listSelection = Math.min(listSelection, assets.length + 1)
+    restoreViewContext(context)
+    pushNotch()
+  }
+
   function refreshMarkets(force) {
-    if (!root || !root.opened || !m.visible || loading) return
-    loading = true
+    if (!root || !root.opened || !m.pluginVisible || refreshing) return
+    var generation = ++refreshGeneration
+    var context = captureViewContext()
+    loading = assets.length === 0
+    refreshing = true
     errorMessage = ""
-    exec(force ? ["refresh", "--force"] : ["refresh"], function (out) {
-      loading = false
-      parseResult(out, function (result) {
-        assets = result.assets || []
-        holdings = result.holdings || ({})
-        if (assets.length > 0 && assets.every(function (asset) { return !!asset.error }))
-          errorMessage = "Unable to refresh prices"
-        listSelection = Math.min(listSelection, assets.length + 1)
-        pushNotch()
+    exec(["snapshot"], function (cachedOut) {
+      if (generation !== refreshGeneration) return
+      parseResult(cachedOut, function (cached) {
+        m.loading = false
+        m.applyPulse(cached, context)
+      })
+      if (!root || !root.opened || !m.pluginVisible) { loading = false; refreshing = false; return }
+      var refreshArgs = ["refresh"]
+      if (force) refreshArgs.push("--force")
+      exec(refreshArgs, function (out) {
+        if (generation !== refreshGeneration) return
+        loading = false
+        refreshing = false
+        try {
+          var result = JSON.parse((out || "").trim())
+          m.applyPulse(result, context)
+        } catch (e) {
+          errorMessage = "Live refresh failed · showing the last snapshot"
+        }
       })
     })
+  }
+
+  function invalidateRefresh() {
+    refreshGeneration++
+    refreshing = false
   }
 
   function pushNotch() {
     if (root && pluginKey && root.updateNotchData)
       root.updateNotchData(pluginKey, m.notchIcon, m.notchText)
+  }
+
+  function refreshNotch() {
+    // Cached data is local: it lets the enabled bar widget show favorites
+    // before this tab is opened, without issuing a background network refresh.
+    if (!root || !pluginKey) return
+    exec(["snapshot"], function (out) {
+      try {
+        var snapshot = JSON.parse((out || "").trim())
+        m.notchFavoriteAssets = (snapshot.assets || []).filter(function (asset) { return asset.favorite && !asset.error })
+        m.updateNotchTicker()
+      } catch (error) {}
+    })
+  }
+
+  function updateNotchTicker() {
+    m.notchText = (m.notchFavoriteAssets || []).map(function (asset) {
+      return asset.symbol + " " + (m.notchShowValue
+        ? m.formatPrice(asset.price, asset.currency)
+        : m.signed(asset.dayChangePct, "%"))
+    }).join("  ·  ")
+    m.pushNotch()
   }
 
   function selectedAsset() {
@@ -111,6 +231,37 @@ Item {
 
   function selectedLots() {
     return holdings[selectedSymbol] || []
+  }
+
+  function isFavorite(ticker) {
+    return favorites.indexOf(ticker) >= 0
+  }
+
+  function favoriteSymbols() {
+    return favorites.length > 0 ? favorites.join("  ·  ") : "Choose a star from an asset's actions"
+  }
+
+  function formatTimestamp(value) {
+    if (!value) return "Time unavailable"
+    return Qt.formatDateTime(new Date(Number(value) * 1000), "MMM d · h:mm AP")
+  }
+
+  function marketStateLabel(asset) {
+    var state = asset ? String(asset.marketState || "").toUpperCase() : ""
+    return state && state !== "UNKNOWN" ? state : ""
+  }
+
+  function provenanceText(asset) {
+    if (!asset) return "Source unavailable"
+    var parts = []
+    if (asset.stale) parts.push("CACHED")
+    parts.push(asset.source || "Yahoo Finance")
+    parts.push(asset.currency || "Currency unavailable")
+    var marketState = marketStateLabel(asset)
+    if (marketState) parts.push(marketState)
+    parts.push("As of " + formatTimestamp(asset.asOf))
+    parts.push("Fetched " + formatTimestamp(asset.fetchedAt))
+    return parts.join("  ·  ")
   }
 
   function formatPrice(value, currency) {
@@ -124,6 +275,7 @@ Item {
   }
 
   function mutate(args, after) {
+    invalidateRefresh()
     loading = true
     exec(args, function (out) {
       loading = false
@@ -135,8 +287,21 @@ Item {
     })
   }
 
+  function toggleFavorite() {
+    if (!selectedSymbol) return
+    invalidateRefresh()
+    loading = true
+    exec(["toggle-favorite", selectedSymbol], function (out) {
+      loading = false
+      parseResult(out, function (state) {
+        favorites = state.favorites || []
+        refreshMarkets(true)
+      })
+    })
+  }
+
   function openSymbolForm() {
-    previousMode = "list"
+    previousMode = "pulse"
     formKind = "symbol"
     formSelection = 0
     symbolField.text = ""
@@ -148,6 +313,7 @@ Item {
   }
 
   function searchAssets() {
+    if (!root || !root.opened || !m.pluginVisible) return
     var query = symbolField.text.trim()
     if (query.length < 2) { searchResults = []; searchSelection = 0; searching = false; searchError = ""; return }
     searching = true
@@ -193,7 +359,7 @@ Item {
   function saveForm() {
     if (formKind === "symbol") {
       if (!symbolField.text.trim()) { errorMessage = "Enter a symbol"; return }
-      mutate(["add-symbol", symbolField.text], function () { mode = "list" })
+      mutate(["add-symbol", symbolField.text], function () { mode = "pulse" })
       return
     }
     if (!quantityField.text.trim()) { errorMessage = "Quantity is required"; return }
@@ -206,22 +372,41 @@ Item {
   function openDetail(ticker) {
     selectedSymbol = ticker
     selectedRange = "1M"
+    chartPoints = []
+    chartMetadata = ({})
+    chartError = ""
     detailSelection = 0
     mode = "detail"
     loadChart(false)
   }
 
+  function openActions() {
+    previousMode = "detail"
+    actionSelection = 0
+    mode = "action"
+  }
+
   function loadChart(force) {
-    if (!root || !root.opened || !m.visible || !selectedSymbol) return
+    if (!root || !root.opened || !m.pluginVisible || !selectedSymbol) return
+    var generation = ++chartGeneration
     loading = true
+    chartError = ""
     var args = ["chart", selectedSymbol, selectedRange]
     if (force) args.push("--force")
     exec(args, function (out) {
+      if (generation !== chartGeneration) return
       loading = false
-      parseResult(out, function (result) {
+      try {
+        var result = JSON.parse((out || "").trim())
+        if (result.symbol !== selectedSymbol || result.range !== selectedRange) return
         chartPoints = (result.points || []).map(function (point) { return point.value })
         chartStale = !!result.stale
-      })
+        chartMetadata = result
+        chartError = result.warning || ""
+      } catch (error) {
+        chartStale = true
+        chartError = "Chart unavailable · showing the previous valid chart"
+      }
     })
   }
 
@@ -233,6 +418,7 @@ Item {
   function reorderSelected(delta) {
     var row = listSelection - 2
     if (row < 0 || row >= assets.length) return
+    invalidateRefresh()
     exec(["reorder", assets[row].symbol, String(delta)], function () { refreshMarkets(true) })
   }
 
@@ -241,21 +427,23 @@ Item {
     removalKind = kind
     removalId = id || ""
     removalLabel = label || ""
+    removalSymbol = selectedSymbol || (kind === "symbol" ? removalLabel : "")
     confirmSelection = 0
     mode = "confirm"
   }
 
   function confirmRemoval() {
     if (removalKind === "symbol")
-      mutate(["remove-symbol", selectedSymbol || removalLabel, "confirm"], function () { selectedSymbol = ""; mode = "list" })
+      mutate(["remove-symbol", removalSymbol, "confirm"], function () { selectedSymbol = ""; mode = "pulse" })
     else if (removalKind === "lot")
-      mutate(["remove-lot", selectedSymbol, removalId], function () { mode = "detail" })
+      mutate(["remove-lot", removalSymbol, removalId], function () { mode = "detail" })
   }
 
   function goBack() {
     if (mode === "confirm") mode = previousMode
     else if (mode === "form") mode = previousMode
-    else if (mode === "detail") mode = "list"
+    else if (mode === "action") mode = "detail"
+    else if (mode === "detail") mode = "pulse"
     else return false
     return true
   }
@@ -317,6 +505,12 @@ Item {
     return true
   }
 
+  function moveActionSelection(dx, dy) {
+    var step = (dy !== 0 ? dy : dx) > 0 ? 1 : -1
+    actionSelection = (actionSelection + step + 4) % 4
+    return true
+  }
+
   function activateList() {
     if (listSelection === 0) openSymbolForm()
     else if (listSelection === 1) refreshMarkets(true)
@@ -326,12 +520,19 @@ Item {
   function activateDetail() {
     if (detailSelection === 0) { goBack(); return }
     if (detailSelection >= 1 && detailSelection <= 5) { chooseRange(ranges[detailSelection - 1]); return }
-    if (detailSelection === 6) { openLotForm(null); return }
+    if (detailSelection === 6) { openActions(); return }
     var lotIndex = Math.floor((detailSelection - 7) / 2)
     var lots = selectedLots()
     if (!lots[lotIndex]) return
     if ((detailSelection - 7) % 2 === 0) openLotForm(lots[lotIndex])
     else requestRemoval("lot", lots[lotIndex].id, "holding lot")
+  }
+
+  function activateAction() {
+    if (actionSelection === 0) goBack()
+    else if (actionSelection === 1) toggleFavorite()
+    else if (actionSelection === 2) openLotForm(null)
+    else requestRemoval("symbol", "", selectedSymbol)
   }
 
   function activateForm() {
@@ -352,7 +553,7 @@ Item {
     payload = payload || ({})
     if (action === "back" || action === "escape") return goBack()
     if (action === "delete") {
-      if (mode === "list" && listSelection >= 2) {
+      if (mode === "pulse" && listSelection >= 2) {
         selectedSymbol = assets[listSelection - 2].symbol
         requestRemoval("symbol", "", selectedSymbol)
         return true
@@ -381,15 +582,17 @@ Item {
       return false
     }
     if (action === "move") {
-      if (mode === "list") return moveListSelection(payload.dx || 0, payload.dy || 0)
+      if (mode === "pulse") return moveListSelection(payload.dx || 0, payload.dy || 0)
       if (mode === "detail") return moveDetailSelection(payload.dx || 0, payload.dy || 0)
       if (mode === "form") return moveFormSelection(payload.dx || 0, payload.dy || 0)
+      if (mode === "action") return moveActionSelection(payload.dx || 0, payload.dy || 0)
       if (mode === "confirm") { confirmSelection = confirmSelection === 0 ? 1 : 0; return true }
     }
     if (action === "activate") {
-      if (mode === "list") activateList()
+      if (mode === "pulse") activateList()
       else if (mode === "detail") activateDetail()
       else if (mode === "form") activateForm()
+      else if (mode === "action") activateAction()
       else if (mode === "confirm") { if (confirmSelection === 0) goBack(); else confirmRemoval() }
       return true
     }
@@ -397,19 +600,35 @@ Item {
   }
 
   onNotchTextChanged: pushNotch()
-  onRootChanged: if (root && root.opened && m.visible) refreshMarkets(false)
-  onVisibleChanged: if (visible && root && root.opened) refreshMarkets(false)
+  onRootChanged: {
+    if (!root) return
+    refreshNotch()
+    if (root.opened && m.pluginVisible) refreshMarkets(false)
+  }
+  onPluginVisibleChanged: if (m.pluginVisible && root && root.opened) refreshMarkets(false)
   Connections {
     target: root
     function onOpenedChanged() {
-      if (root && root.opened && m.visible) m.refreshMarkets(false)
+      if (root && root.opened && m.pluginVisible) m.refreshMarkets(false)
     }
   }
   Timer {
     interval: 300000
     repeat: true
-    running: m.visible && root && root.opened
+    running: m.pluginVisible && root && root.opened
     onTriggered: m.refreshMarkets(false)
+  }
+  Timer {
+    interval: 300000
+    repeat: true
+    running: root && !!pluginKey
+    onTriggered: m.refreshNotch()
+  }
+  Timer {
+    interval: 4000
+    repeat: true
+    running: root && !!pluginKey && m.notchFavoriteAssets.length > 0
+    onTriggered: { m.notchShowValue = !m.notchShowValue; m.updateNotchTicker() }
   }
   Timer {
     id: searchTimer
@@ -432,9 +651,13 @@ Item {
         height: Style.space(38)
         spacing: Style.space(8)
         Text { text: "󰄪"; color: Color.accent; font.family: Style.fontFamily; font.pixelSize: Style.font.title; anchors.verticalCenter: parent.verticalCenter }
-        Text { text: mode === "detail" ? selectedSymbol : (mode === "form" ? (formKind === "symbol" ? "Add symbol" : "Purchase lot") : "Markets"); color: Color.foreground; font.family: Style.fontFamily; font.pixelSize: Style.font.title; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
+        Column {
+          anchors.verticalCenter: parent.verticalCenter
+          Text { text: mode === "pulse" ? "MARKET PULSE" : (mode === "detail" || mode === "action" ? selectedSymbol : (formKind === "symbol" ? "ADD TO WATCHLIST" : "PORTFOLIO")); color: Color.accent; font.family: Style.fontFamily; font.pixelSize: Style.font.caption; font.bold: true }
+          Text { text: mode === "pulse" ? "Your market at a glance" : (mode === "action" ? "Choose what to do next" : (mode === "detail" ? "Price, context and position" : (formKind === "symbol" ? "Find an asset" : "Record a purchase"))); color: Color.foreground; font.family: Style.fontFamily; font.pixelSize: Style.font.body; font.bold: true }
+        }
         Item { width: Math.max(0, parent.width - Style.space(260)); height: 1 }
-        Text { visible: loading; text: "Loading…"; color: Color.muted; font.family: Style.fontFamily; font.pixelSize: Style.font.bodySmall; anchors.verticalCenter: parent.verticalCenter }
+        Text { visible: loading || refreshing; text: loading ? "Loading…" : "Refreshing…"; color: Color.muted; font.family: Style.fontFamily; font.pixelSize: Style.font.bodySmall; anchors.verticalCenter: parent.verticalCenter }
       }
 
       Item {
@@ -442,12 +665,12 @@ Item {
         height: parent.height - Style.space(48)
 
         Column {
-          opacity: m.mode === "list" ? 1 : 0
+          opacity: m.mode === "pulse" ? 1 : 0
           visible: opacity > 0
-          enabled: m.mode === "list"
-          scale: m.mode === "list" ? 1 : 0.985
-          Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
-          Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+          enabled: m.mode === "pulse"
+          scale: m.mode === "pulse" ? 1 : 0.985
+          Behavior on opacity { NumberAnimation { duration: m.motionDuration; easing.type: Easing.OutCubic } }
+          Behavior on scale { NumberAnimation { duration: m.motionDuration; easing.type: Easing.OutCubic } }
           anchors.fill: parent
           spacing: Style.space(8)
 
@@ -455,18 +678,79 @@ Item {
             width: parent.width
             height: Style.space(34)
             spacing: Style.space(8)
-            ActionButton { label: "＋ Add symbol"; selected: m.listSelection === 0; onTriggered: m.openSymbolForm() }
+            ActionButton { label: "󰐕 Add symbol"; selected: m.listSelection === 0; onTriggered: m.openSymbolForm() }
             ActionButton { label: "󰑐 Refresh"; selected: m.listSelection === 1; onTriggered: m.refreshMarkets(true) }
-            Text { text: "←/→ reorder  ·  Enter details  ·  x remove"; color: Color.muted; font.family: Style.fontFamily; font.pixelSize: Style.font.caption; anchors.verticalCenter: parent.verticalCenter }
+            Text { width: Math.max(0, parent.width - Style.space(280)); text: m.compact ? "↑/↓ · Enter · x" : "↑/↓ navigate  ·  Enter opens asset  ·  x removes"; color: Color.muted; font.family: Style.fontFamily; font.pixelSize: Style.font.caption; elide: Text.ElideRight; anchors.verticalCenter: parent.verticalCenter }
+          }
+
+          Rectangle {
+            visible: m.assets.length > 0
+            width: parent.width
+            height: m.compact ? Style.space(116) : Style.space(138)
+            radius: Style.cornerRadius * 1.5
+            color: Color.popups.background
+            border.color: Color.popups.border
+            border.width: 1
+            property var featured: m.assets.filter(function (asset) { return asset.favorite && !asset.error })[0] || m.assets[0]
+            Text { x: Style.space(12); y: Style.space(9); text: parent.featured ? parent.featured.symbol + "  ·  " + m.signed(parent.featured.dayChangePct, "%") : ""; color: Color.accent; font.family: Style.fontFamily; font.pixelSize: Style.font.caption; font.bold: true }
+            Sparkline { anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.margins: Style.space(10); anchors.topMargin: Style.space(28); height: parent.height - Style.space(38); values: parent.featured ? parent.featured.sparkline || [] : []; large: true }
+            MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: { if (parent.featured) m.openDetail(parent.featured.symbol) } }
+          }
+
+          Flow {
+            width: parent.width
+            spacing: Style.space(8)
+
+            Rectangle {
+              visible: m.hasPositions
+              width: m.compact ? parent.width : (parent.width - Style.space(8)) / 2
+              height: Style.space(78)
+              radius: Style.cornerRadius * 1.5
+              color: Color.popups.background
+              border.color: Color.popups.border
+              border.width: 1
+              Column {
+                anchors.fill: parent; anchors.margins: Style.space(10); spacing: Style.space(4)
+                Text { text: "PORTFOLIO"; color: Color.muted; font.family: Style.fontFamily; font.pixelSize: Style.font.caption; font.bold: true }
+                Text { visible: !m.portfolioComplete; width: parent.width; text: "Portfolio totals incomplete · unavailable: " + m.unavailablePositions.join(", "); color: Color.accent; font.family: Style.fontFamily; font.pixelSize: Style.font.caption; elide: Text.ElideRight }
+                Row {
+                  visible: m.portfolioByCurrency.length > 0; spacing: Style.space(14)
+                  Repeater {
+                    model: m.portfolioByCurrency
+                    Column {
+                      required property var modelData
+                      Text { text: m.formatPrice(modelData.value, modelData.currency); color: Color.foreground; font.family: Style.fontFamily; font.pixelSize: Style.font.body; font.bold: true }
+                      Text { text: modelData.gain === null ? "Cost basis incomplete" : "Gain " + m.signed(modelData.gain, "") + " " + modelData.currency; color: Color.muted; font.family: Style.fontFamily; font.pixelSize: Style.font.caption }
+                    }
+                  }
+                }
+              }
+            }
+
+            Rectangle {
+              visible: m.favorites.length > 0
+              width: m.compact ? parent.width : (parent.width - Style.space(8)) / 2
+              height: Style.space(78)
+              radius: Style.cornerRadius * 1.5
+              color: Color.popups.background
+              border.color: Color.popups.border
+              border.width: 1
+              Column {
+                anchors.fill: parent; anchors.margins: Style.space(10); spacing: Style.space(4)
+                Text { text: "FAVORITES  ·  " + m.favorites.length; color: Color.muted; font.family: Style.fontFamily; font.pixelSize: Style.font.caption; font.bold: true }
+                Text { width: parent.width; text: m.favoriteSymbols(); color: Color.foreground; font.family: Style.fontFamily; font.pixelSize: Style.font.body; elide: Text.ElideRight }
+              }
+            }
           }
 
           Text { visible: errorMessage !== ""; text: errorMessage + (assets.length ? " · showing cached data where available" : ""); color: Color.foreground; font.family: Style.fontFamily; font.pixelSize: Style.font.bodySmall }
           Text { visible: !loading && assets.length === 0; text: "Your watchlist is empty. Add a symbol to begin."; color: Color.muted; font.family: Style.fontFamily; font.pixelSize: Style.font.body }
+          Text { text: "WATCHLIST  ·  " + assets.length; color: Color.muted; font.family: Style.fontFamily; font.pixelSize: Style.font.caption; font.bold: true }
 
           Flickable {
             id: assetScroll
             width: parent.width
-            height: parent.height - Style.space(100)
+            height: Math.max(0, parent.height - y - Style.space(24))
             contentHeight: assetColumn.implicitHeight
             clip: true
             NumberAnimation { id: assetScrollAnim; target: assetScroll; property: "contentY"; duration: 160; easing.type: Easing.OutCubic }
@@ -483,8 +767,8 @@ Item {
                   height: Style.space(68)
                   radius: Style.cornerRadius
                   color: m.listSelection === index + 2 ? Color.menu.selectedBackground : Color.popups.background
-                  border.color: modelData.stale ? Color.accent : Color.popups.border
-                  border.width: 1
+                  border.color: m.listSelection === index + 2 || modelData.stale ? Color.accent : Color.popups.border
+                  border.width: m.listSelection === index + 2 ? 2 : 1
 
                   MouseArea { anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: m.openDetail(modelData.symbol) }
                   Row {
@@ -492,24 +776,26 @@ Item {
                     anchors.margins: Style.space(9)
                     spacing: Style.space(12)
                     Column {
-                      width: Style.space(92); anchors.verticalCenter: parent.verticalCenter
-                      Text { text: modelData.symbol; color: Color.foreground; font.family: Style.fontFamily; font.pixelSize: Style.font.body; font.bold: true }
+                      width: m.compact ? Style.space(66) : Style.space(92); anchors.verticalCenter: parent.verticalCenter
+                      Text { text: (modelData.favorite ? "󰓎 " : "") + modelData.symbol; color: modelData.favorite ? Color.accent : Color.foreground; font.family: Style.fontFamily; font.pixelSize: Style.font.body; font.bold: true }
                       Text { text: modelData.stale ? "cached" : (modelData.error ? "unavailable" : modelData.currency); color: modelData.stale ? Color.accent : Color.muted; font.family: Style.fontFamily; font.pixelSize: Style.font.caption }
                     }
-                    Sparkline { width: Style.space(128); height: Style.space(42); anchors.verticalCenter: parent.verticalCenter; values: modelData.sparkline || [] }
+                    // Every listed instrument gets a chart, including on narrow
+                    // panels. The compact version is smaller, never omitted.
+                    Sparkline { width: m.compact ? Style.space(72) : Style.space(128); height: Style.space(42); anchors.verticalCenter: parent.verticalCenter; values: modelData.sparkline || [] }
                     Column {
-                      width: Style.space(112); anchors.verticalCenter: parent.verticalCenter
+                      width: m.compact ? Style.space(88) : Style.space(112); anchors.verticalCenter: parent.verticalCenter
                       Text { text: m.formatPrice(modelData.price, modelData.currency); color: Color.foreground; font.family: Style.fontFamily; font.pixelSize: Style.font.body; font.bold: true }
                       Text { text: modelData.error ? modelData.error : m.signed(modelData.dayChangePct, "% today"); color: modelData.dayChange >= 0 ? Color.accent : Color.foreground; font.family: Style.fontFamily; font.pixelSize: Style.font.caption; elide: Text.ElideRight; width: parent.width }
                     }
                     Column {
-                      visible: modelData.quantity > 0
+                      visible: modelData.quantity > 0 && !m.compact
                       width: Style.space(150); anchors.verticalCenter: parent.verticalCenter
                       Text { text: "Position " + m.formatPrice(modelData.marketValue, modelData.currency); color: Color.foreground; font.family: Style.fontFamily; font.pixelSize: Style.font.bodySmall }
                       Text { text: modelData.gain === null ? "Cost basis incomplete" : "Gain " + m.signed(modelData.gain, "") + " " + modelData.currency + " (" + m.signed(modelData.gainPct, "%") + ")"; color: modelData.gain >= 0 ? Color.accent : Color.foreground; font.family: Style.fontFamily; font.pixelSize: Style.font.caption }
                     }
-                    ActionButton { label: "󰁝"; selected: false; onTriggered: { m.listSelection = index + 2; m.reorderSelected(-1) } }
-                    ActionButton { label: "󰁅"; selected: false; onTriggered: { m.listSelection = index + 2; m.reorderSelected(1) } }
+                    ActionButton { visible: !m.compact; label: "󰁝"; selected: false; onTriggered: { m.listSelection = index + 2; m.reorderSelected(-1) } }
+                    ActionButton { visible: !m.compact; label: "󰁅"; selected: false; onTriggered: { m.listSelection = index + 2; m.reorderSelected(1) } }
                     Text { text: "󰁔"; color: Color.muted; font.family: Style.fontFamily; font.pixelSize: Style.font.body; anchors.verticalCenter: parent.verticalCenter }
                   }
                 }
@@ -524,23 +810,39 @@ Item {
           visible: opacity > 0
           enabled: m.mode === "detail"
           scale: m.mode === "detail" ? 1 : 0.985
-          Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
-          Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+          Behavior on opacity { NumberAnimation { duration: m.motionDuration; easing.type: Easing.OutCubic } }
+          Behavior on scale { NumberAnimation { duration: m.motionDuration; easing.type: Easing.OutCubic } }
           anchors.fill: parent
           spacing: Style.space(8)
-          Row {
+          Flow {
             width: parent.width; height: Style.space(32); spacing: Style.space(6)
-            ActionButton { label: "󰁍 Back"; selected: m.detailSelection === 0; onTriggered: m.goBack() }
+            ActionButton {
+              label: root && root.uiLang === "es" ? "󰁍 Índice" : "󰁍 Index"
+              selected: m.detailSelection === 0
+              onTriggered: {
+                // Always return to the complete watchlist; canceling an
+                // in-flight chart prevents a late response from re-opening it.
+                m.chartGeneration++
+                m.selectedSymbol = ""
+                m.mode = "pulse"
+              }
+            }
             Repeater {
               model: m.ranges
               ActionButton { required property string modelData; required property int index; label: modelData; selected: m.selectedRange === modelData || m.detailSelection === index + 1; onTriggered: m.chooseRange(modelData) }
             }
-            ActionButton { label: "＋ Purchase"; selected: m.detailSelection === 6; onTriggered: m.openLotForm(null) }
-            ActionButton { label: "󰆴 Asset"; selected: false; onTriggered: m.requestRemoval("symbol", "", m.selectedSymbol) }
+            ActionButton { label: "󰒓 Actions"; selected: m.detailSelection === 6; onTriggered: m.openActions() }
           }
 
-          Text { visible: m.chartStale; text: "Chart is cached; live provider unavailable."; color: Color.accent; font.family: Style.fontFamily; font.pixelSize: Style.font.caption }
-          Sparkline { width: parent.width; height: Style.space(190); values: m.chartPoints; large: true }
+          Text { visible: m.chartError !== ""; text: m.chartError; color: Color.accent; font.family: Style.fontFamily; font.pixelSize: Style.font.caption }
+          Text { visible: m.chartStale && m.chartError === ""; text: "Chart is cached; live provider unavailable."; color: Color.accent; font.family: Style.fontFamily; font.pixelSize: Style.font.caption }
+          Sparkline { width: parent.width; height: m.compact ? Style.space(150) : Style.space(190); values: m.chartPoints; large: true }
+          Text {
+            width: parent.width
+            text: m.provenanceText(m.chartMetadata)
+            color: m.chartMetadata && m.chartMetadata.stale ? Color.accent : Color.muted
+            font.family: Style.fontFamily; font.pixelSize: Style.font.caption; elide: Text.ElideRight
+          }
 
           Row {
             width: parent.width; height: Style.space(48); spacing: Style.space(30)
@@ -595,13 +897,43 @@ Item {
           }
         }
 
+        Rectangle {
+          opacity: m.mode === "action" ? 1 : 0
+          visible: opacity > 0
+          enabled: m.mode === "action"
+          scale: m.mode === "action" ? 1 : 0.97
+          Behavior on opacity { NumberAnimation { duration: m.motionDuration; easing.type: Easing.OutCubic } }
+          Behavior on scale { NumberAnimation { duration: m.motionDuration; easing.type: Easing.OutCubic } }
+          anchors.centerIn: parent
+          width: Math.min(parent.width - Style.space(24), Style.space(520))
+          height: actionColumn.implicitHeight + Style.space(28)
+          radius: Style.cornerRadius * 2
+          color: Color.popups.background
+          border.color: Color.popups.border
+          border.width: 1
+
+          Column {
+            id: actionColumn
+            anchors.centerIn: parent
+            width: parent.width - Style.space(28)
+            spacing: Style.space(9)
+            Text { text: "ASSET ACTIONS"; color: Color.muted; font.family: Style.fontFamily; font.pixelSize: Style.font.caption; font.bold: true }
+            Text { text: m.selectedSymbol; color: Color.foreground; font.family: Style.fontFamily; font.pixelSize: Style.font.title; font.bold: true }
+            Text { text: "Keep the overview calm; reveal changes only when you need them."; width: parent.width; wrapMode: Text.WordWrap; color: Color.muted; font.family: Style.fontFamily; font.pixelSize: Style.font.bodySmall }
+            ActionRow { label: "󰁍  Back to asset"; detail: "Return without changing anything"; selected: m.actionSelection === 0; onTriggered: m.goBack() }
+            ActionRow { label: m.isFavorite(m.selectedSymbol) ? "󰓎  Remove favorite" : "󰓏  Add favorite"; detail: "Pin this asset in Market Pulse"; selected: m.actionSelection === 1; onTriggered: m.toggleFavorite() }
+            ActionRow { label: "󰐕  Record purchase"; detail: "Add quantity, date and optional cost"; selected: m.actionSelection === 2; onTriggered: m.openLotForm(null) }
+            ActionRow { label: "󰆴  Remove from Watchlist"; detail: "Requires confirmation and removes portfolio lots"; selected: m.actionSelection === 3; destructive: true; onTriggered: m.requestRemoval("symbol", "", m.selectedSymbol) }
+          }
+        }
+
         Column {
           opacity: m.mode === "form" ? 1 : 0
           visible: opacity > 0
           enabled: m.mode === "form"
           scale: m.mode === "form" ? 1 : 0.985
-          Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
-          Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+          Behavior on opacity { NumberAnimation { duration: m.motionDuration; easing.type: Easing.OutCubic } }
+          Behavior on scale { NumberAnimation { duration: m.motionDuration; easing.type: Easing.OutCubic } }
           anchors.centerIn: parent
           width: Math.min(parent.width, Style.space(460))
           spacing: Style.space(10)
@@ -693,8 +1025,8 @@ Item {
           visible: opacity > 0
           enabled: m.mode === "confirm"
           scale: m.mode === "confirm" ? 1 : 0.96
-          Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
-          Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutBack } }
+          Behavior on opacity { NumberAnimation { duration: m.motionDuration; easing.type: Easing.OutCubic } }
+          Behavior on scale { NumberAnimation { duration: m.motionDuration; easing.type: Easing.OutBack } }
           anchors.centerIn: parent
           width: Math.min(parent.width - Style.space(40), Style.space(420))
           height: confirmColumn.implicitHeight + Style.space(28)
@@ -727,6 +1059,29 @@ Item {
     color: Color.menu.selectedBackground
     border.color: selected ? Color.accent : Color.popups.border
     border.width: 1
+  }
+
+  component ActionRow: Rectangle {
+    id: actionRow
+    property string label: ""
+    property string detail: ""
+    property bool selected: false
+    property bool destructive: false
+    signal triggered()
+    width: parent ? parent.width : Style.space(320)
+    height: Style.space(54)
+    radius: Style.cornerRadius
+    color: selected || rowMouse.containsMouse ? Color.menu.selectedBackground : "transparent"
+    border.color: selected ? Color.accent : Color.popups.border
+    border.width: selected ? 2 : 1
+    Behavior on color { ColorAnimation { duration: m.motionDuration } }
+    Column {
+      anchors.left: parent.left; anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
+      anchors.leftMargin: Style.space(11); anchors.rightMargin: Style.space(11); spacing: Style.space(2)
+      Text { text: actionRow.label; color: actionRow.destructive && actionRow.selected ? Color.accent : Color.foreground; font.family: Style.fontFamily; font.pixelSize: Style.font.body; font.bold: true }
+      Text { width: parent.width; text: actionRow.detail; color: Color.muted; font.family: Style.fontFamily; font.pixelSize: Style.font.caption; elide: Text.ElideRight }
+    }
+    MouseArea { id: rowMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: actionRow.triggered() }
   }
 
   component ActionButton: Rectangle {

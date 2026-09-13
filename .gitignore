@@ -5,6 +5,8 @@
 *.swp
 .DS_Store
 *.log
+__pycache__/
+*.py[cod]
 
 # Local runtime state
 *.lock

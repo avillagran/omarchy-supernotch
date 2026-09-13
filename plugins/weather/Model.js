@@ -234,6 +234,53 @@ function dayIcon(day) {
   return iconForCode(best.weatherCode, false)
 }
 
+function updateCityRuntime(cities, cityId, patch) {
+  var source = cities || []
+  var result = source.slice()
+  for (var i = 0; i < result.length; ++i) {
+    if (result[i].id !== cityId) continue
+    var updated = {}
+    var key
+    for (key in result[i]) updated[key] = result[i][key]
+    for (key in (patch || {})) updated[key] = patch[key]
+    result[i] = updated
+    break
+  }
+  return result
+}
+
+function responseIsCurrent(tokens, key, requestId) {
+  return !!tokens && tokens[key] === requestId
+}
+
+function cityWeather(report, todayString) {
+  var current = openMeteoCurrentCondition(report)
+  if (!current) return null
+  var daily = report && report.daily ? report.daily : {}
+  var first = 0
+  for (var i = 0; i < (daily.time || []).length; ++i) {
+    if (String(daily.time[i]).slice(0, 10) === String(todayString || "").slice(0, 10)) {
+      first = i
+      break
+    }
+  }
+  var future = openMeteoForecastDays(report, todayString).map(function(day) {
+    return { date: day.date, maxC: day.maxtempC, minC: day.mintempC, icon: dayIcon(day) }
+  })
+  return {
+    temp: current.temp_C,
+    feels: current.FeelsLikeC,
+    humidity: current.humidity,
+    wind: current.windspeedKmph,
+    code: current.openMeteoWeatherCode,
+    isDay: current.isDay,
+    icon: currentIcon(current, ""),
+    maxC: roundedTemp(daily.temperature_2m_max ? daily.temperature_2m_max[first] : ""),
+    minC: roundedTemp(daily.temperature_2m_min ? daily.temperature_2m_min[first] : ""),
+    forecast: future
+  }
+}
+
 function iconForOpenMeteoCode(code, night) {
   var c = parseInt(String(code || "0"), 10)
   if (c === 0) return iconForCode(113, night)
@@ -289,6 +336,9 @@ if (typeof module !== "undefined") {
     buildForecastDays: buildForecastDays,
     bareTempForDay: bareTempForDay,
     dayIcon: dayIcon,
+    updateCityRuntime: updateCityRuntime,
+    responseIsCurrent: responseIsCurrent,
+    cityWeather: cityWeather,
     iconForOpenMeteoCode: iconForOpenMeteoCode,
     iconForCode: iconForCode
   }

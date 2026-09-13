@@ -295,8 +295,9 @@ Panel {
   property int _pending: 0
   Timer { id: switchTimer; interval: 150; onTriggered: { root.current = root._pending; root.contentOpacity = 1; root.cardH = root.fullH; root.pushBar() } }
   function setModule(i) {
-    if (i === root.current) { if (!root.opened) root.open(); return }
-    root.contentOpacity = 0; root._pending = i; switchTimer.restart()
+    if (i === root.current && !switchTimer.running) { if (!root.opened) root.open(); return }
+    // Retarget the in-flight fade without postponing its original deadline.
+    root.contentOpacity = 0; root._pending = i; switchTimer.start()
   }
   function openPlugin(key) {
     for (var i = 0; i < root.plugins.length; i++) if (root.plugins[i].key === key) {
@@ -324,7 +325,7 @@ Panel {
       var mod = root.plugins[root.current]
       if (mod) { w.barIcon = mod.icon || "◇"; w.barInfo = (mod.label && (mod.label[root.uiLang] || mod.label.en)) || mod.key; w.barActive = true; return }
     }
-    w.barActive = false; w.barIcon = "♪"; w.barInfo = root.t(root.uiLang, "idle")
+    w.barActive = false; w.barIcon = "󰝚"; w.barInfo = root.t(root.uiLang, "idle")
   }
   function refreshAll() {}
 
@@ -351,14 +352,14 @@ Panel {
           keyCatcher.forceActiveFocus()
       }
       onCloseRequested: {
-        if (root.focusSection === "content" && root.dispatchKeyboardAction("back", {}))
+        if (root.dispatchKeyboardAction("back", {}))
           return
         root.close()
       }
-      onTabRequested: function (d) { var n = Math.max(1, root.plugins.length); root.setModule((root.current + d + n) % n); root.focusSection = "tabs" }
+      onTabRequested: function (d) { var n = Math.max(1, root.plugins.length); root.setModule(((switchTimer.running ? root._pending : root.current) + d + n) % n); root.focusSection = "tabs" }
       onMoveRequested: function (dx, dy) {
         if (root.focusSection === "tabs") {
-          if (dx !== 0) { var n2 = Math.max(1, root.plugins.length); root.setModule((root.current + (dx > 0 ? 1 : -1) + n2) % n2) }
+          if (dx !== 0) { var n2 = Math.max(1, root.plugins.length); root.setModule(((switchTimer.running ? root._pending : root.current) + (dx > 0 ? 1 : -1) + n2) % n2) }
           else if (dy > 0) { root.focusSection = "content" }
         } else {
           var handled = root.dispatchKeyboardAction("move", { dx: dx, dy: dy })
@@ -474,7 +475,9 @@ Panel {
           var fr = Math.round(Color.foreground.r * 255)
           var fg = Math.round(Color.foreground.g * 255)
           var fb = Math.round(Color.foreground.b * 255)
-          for (var i = 0; i < 2600; i++) {
+          // Enough texture to prevent a flat surface; a dense 2600-pixel loop
+          // was needlessly expensive whenever the card resized.
+          for (var i = 0; i < 600; i++) {
             var a = Math.random() * 0.6
             ctx.fillStyle = "rgba(" + fr + "," + fg + "," + fb + "," + a.toFixed(2) + ")"
             ctx.fillRect(Math.random() * width, Math.random() * height, 1, 1)
@@ -568,6 +571,7 @@ Panel {
                     opacity: tabMa.containsMouse ? 1 : 0
                     width: tabMa.containsMouse ? tabLabel.implicitWidth : 0
                     clip: true
+                    font.family: Style.fontFamily
                     font.pixelSize: Style.font.bodySmall
                     font.bold: root.current === index
                     anchors.verticalCenter: parent.verticalCenter
@@ -591,7 +595,7 @@ Panel {
             scale: closeMa.pressed ? 0.82 : 1.0
             Behavior on scale { NumberAnimation { duration: 150; easing.type: Easing.OutBack; easing.overshoot: 2.5 } }
             Behavior on color { ColorAnimation { duration: 140 } }
-            Text { anchors.centerIn: parent; text: "✕"; color: Color.muted; font.pixelSize: Style.font.body }
+            Text { anchors.centerIn: parent; text: "󰅖"; color: Color.muted; font.family: Style.fontFamily; font.pixelSize: Style.font.body }
             MouseArea { id: closeMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.close() }
           }
         }
