@@ -149,6 +149,42 @@ test("offline asset search fails cleanly without a traceback", () => {
   assert.doesNotMatch(result.stderr, /Traceback/);
 });
 
+test("Yahoo chart downloads reject oversized headers and streamed bodies before decoding", () => {
+  const probe = String.raw`
+import pathlib
+import sys
+
+source = pathlib.Path(sys.argv[1])
+namespace = {"__name__": "markets_backend", "__file__": str(source)}
+exec(compile(source.read_text(encoding="utf-8"), str(source), "exec"), namespace)
+limit = namespace["MAX_CHART_DOWNLOAD"]
+
+class Response:
+    def __init__(self, headers, body):
+        self.headers = headers
+        self.body = body
+    def __enter__(self): return self
+    def __exit__(self, *args): return False
+    def read(self, size):
+        assert size == limit + 1
+        return self.body
+
+for headers, body in [
+    ({"Content-Length": str(limit + 1)}, b""),
+    ({}, b"x" * (limit + 1)),
+]:
+    namespace["urlopen"] = lambda request, timeout: Response(headers, body)
+    try:
+        namespace["fetch_yahoo"]("AAPL", "5d", "15m")
+    except OSError as error:
+        assert "chart response exceeds" in str(error), error
+    else:
+        raise AssertionError("oversized response was accepted")
+`;
+  const result = spawnSync("python3", ["-c", probe, backend], { encoding: "utf8", env: { ...process.env, MARKETS_OFFLINE: "0" } });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+});
+
 test("refresh uses fixtures, computes portfolio values, and falls back to stale cache", () => {
   const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "markets-fixtures-"));
   fs.copyFileSync(path.join(repoRoot, "tests", "markets-AAPL-5d.json"), path.join(fixtureDir, "markets-AAPL-5d.json"));
