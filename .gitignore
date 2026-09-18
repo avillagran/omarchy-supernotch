@@ -5,6 +5,8 @@
 *.swp
 .DS_Store
 *.log
+# Repository-local agent guidance must never ship in a plugin snapshot.
+AGENTS.md
 __pycache__/
 *.py[cod]
 
