@@ -23,6 +23,7 @@ LOCK_FILE = STATE_DIR / "markets.lock"
 SYMBOL_RE = re.compile(r"^[A-Z0-9][A-Z0-9.^=-]{0,19}$")
 CACHE_TTL = 300
 MAX_SEARCH_DOWNLOAD = 1024 * 1024
+MAX_CHART_DOWNLOAD = 4 * 1024 * 1024
 MAX_FINANCIAL_VALUE = 1_000_000_000_000_000
 RANGES = {"1D": ("1d", "5m"), "1W": ("5d", "15m"), "1M": ("1mo", "1d"),
           "3M": ("3mo", "1d"), "1Y": ("1y", "1d"), "5Y": ("5y", "1wk")}
@@ -278,7 +279,13 @@ def fetch_yahoo(ticker, provider_range, interval):
         request = Request(url, headers={"User-Agent": "Mozilla/5.0 SuperNotch/1.0", "Accept": "application/json"})
         try:
             with urlopen(request, timeout=12) as response:
-                payload = json.loads(response.read().decode("utf-8"))
+                declared_size = response.headers.get("Content-Length")
+                if declared_size is not None and int(declared_size) > MAX_CHART_DOWNLOAD:
+                    raise ValueError("chart response exceeds 4 MiB")
+                raw = response.read(MAX_CHART_DOWNLOAD + 1)
+            if len(raw) > MAX_CHART_DOWNLOAD:
+                raise ValueError("chart response exceeds 4 MiB")
+            payload = json.loads(raw.decode("utf-8"))
             parse_chart(payload)
             return payload
         except (HTTPError, URLError, TimeoutError, json.JSONDecodeError, ValueError) as exc:
