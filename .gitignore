@@ -12,3 +12,9 @@ __pycache__/
 
 # Local runtime state
 *.lock
+
+# Native backends: keep reproducible dependencies, not build output.
+/plugins/weather/rust/target/
+!/plugins/weather/rust/Cargo.lock
+/plugins/clock/rust/target/
+!/plugins/clock/rust/Cargo.lock

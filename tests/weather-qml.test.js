@@ -11,7 +11,7 @@ function source(file) { return fs.readFileSync(file, "utf8"); }
 
 test("weather is a plugin-local multi-city feature using the root.run helper contract", () => {
   const qml = source(qmlPath);
-  assert.match(source(backendPath), /^#!\/usr\/bin\/env python3/);
+  assert.match(source(backendPath), /^#!\/usr\/bin\/env bash/);
   for (const command of ["state", "search", "forecast", "add-city", "replace-city", "activate", "reorder", "remove"])
     assert.match(qml, new RegExp(`\\["${command}"`), `missing ${command} helper call`);
   assert.match(qml, /root\.run\(\["plugin-exec",\s*pluginKey\]\.concat\(args\)/);
@@ -74,8 +74,8 @@ test("compact cards select the active notch city and expose full keyboard manage
 test("weather reserves enough responsive panel height for cards and autocomplete", () => {
   const qml = source(qmlPath);
   const manifest = JSON.parse(source(path.join(repoRoot, "plugins/weather/plugin.json")));
-  assert.ok(manifest.preferredHeight >= 430);
-  assert.match(qml, /implicitHeight:\s*Style\.space\(430\)/);
+  assert.ok(manifest.preferredHeight >= 680);
+  assert.match(qml, /implicitHeight:\s*Style\.space\(550\)/);
 });
 
 test("weather bindings never dereference a missing active city", () => {
@@ -93,5 +93,41 @@ test("weather derives forecast days from the city's local report date", () => {
 
 test("weather cancels search mode when its tab becomes inactive", () => {
   const qml = source(qmlPath);
-  assert.match(qml, /onPluginVisibleChanged:\s*\{\s*if \(pluginVisible\) loadState\(true\)\s*else cancelOverlay\(\)\s*\}/);
+  assert.match(qml, /onPluginVisibleChanged:\s*\{\s*if \(pluginVisible\) loadState\(true\)/);
+  assert.match(qml, /else \{ cancelOverlay\(\); playing = false \}/);
+});
+
+test("map controls select real forecast frames and request a new geographic zoom", () => {
+  const qml = source(qmlPath);
+  assert.match(qml, /property int mapZoom:\s*1/);
+  assert.match(qml, /property int frameIndex:\s*0/);
+  assert.match(qml, /function setMapZoom\(next\)/);
+  assert.match(qml, /exec\(\["chart"\]\.concat\(args\)/);
+  assert.match(qml, /exec\(\["chart-live"\]\.concat\(args\)/);
+  assert.match(qml, /source:\s*m\.currentFrame\s*&&\s*m\.currentFrame\.path/);
+  assert.match(qml, /running:\s*m\.pluginVisible\s*&&\s*m\.playing/);
+  assert.match(qml, /\{ icon: "\\uf067", delta: 1, allowed: m\.mapZoom < 3 \}/);
+  assert.match(qml, /\{ icon: "\\uf068", delta: -1, allowed: m\.mapZoom > 1 \}/);
+  assert.match(qml, /onClicked:\s*m\.setMapZoom\(m\.mapZoom \+ modelData\.delta\)/);
+  assert.match(qml, /model:\s*m\.chartData\s*&&\s*m\.chartData\.labels/);
+  assert.match(qml, /m\.chartData\.scaleKm/);
+  assert.match(qml, /m\.currentFrame\.value/);
+});
+
+test("hourly playback fits ten steps and identifies wind vectors over rain", () => {
+  const qml = source(qmlPath);
+  assert.match(qml, /interval:\s*950/);
+  assert.match(qml, /width:\s*Math\.min\(Style\.space\(28\),\s*Math\.max\(/);
+  assert.match(qml, /visible:\s*m\.chartData\s*&&\s*m\.chartData\.flowMarkers/);
+  assert.match(qml, /tr\("ARROWS: 10 M WIND",\s*"FLECHAS: VIENTO 10 M"\)/);
+});
+
+test("rain, wind and humidity selectors use installed Nerd Font glyphs", () => {
+  const qml = source(qmlPath);
+  const icons = Object.fromEntries([...qml.matchAll(/\{ key: "(rain|clouds|temperature|wind|humidity)", icon: "([^"]+)", label:/g)]
+    .map(([, key, glyph]) => [key, glyph]));
+  assert.equal(icons.rain.codePointAt(0), 0xf0597); // md-weather_rainy
+  assert.equal(icons.wind.codePointAt(0), 0xf059d); // md-weather_windy
+  assert.equal(icons.humidity.codePointAt(0), 0xf058e); // md-water_percent
+  assert.match(qml, /text: modelData\.icon \+ " " \+ modelData\.label[\s\S]*?font\.family: Style\.fontFamily/);
 });

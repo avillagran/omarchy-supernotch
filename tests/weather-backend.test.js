@@ -77,6 +77,23 @@ test("first state read migrates the current Omarchy weather location into its ow
   assert.deepEqual(JSON.parse(fs.readFileSync(omarchyState, "utf8")), { name: "Santiago", latitude: -33.4489, longitude: -70.6693 });
 });
 
+test("map layer and zoom survive a restart without modifying the Omarchy location", () => {
+  const box = sandbox();
+  const weatherLocation = path.join(box.home, ".local", "state", "omarchy", "settings", "weather.json");
+  writeJson(weatherLocation, { name: "Castro", latitude: -42.4828, longitude: -73.7672 });
+  const saved = run(box, ["map-view", "wind", "3"]);
+  assert.equal(saved.mapLayer, "wind");
+  assert.equal(saved.mapZoom, 3);
+  assert.equal(run(box, ["state"]).mapLayer, "wind");
+  assert.equal(run(box, ["state"]).mapZoom, 3);
+  assert.deepEqual(JSON.parse(fs.readFileSync(weatherLocation, "utf8")),
+    { name: "Castro", latitude: -42.4828, longitude: -73.7672 });
+  for (const args of [["map-view", "rain", "4"], ["map-view", "invalid", "1"]]) {
+    assert.notEqual(spawnSync(backend, args, { env: box.env, encoding: "utf8" }).status, 0);
+  }
+  assert.equal(run(box, ["state"]).mapZoom, 3);
+});
+
 test("city search requires two characters and returns canonical place identity", () => {
   const fixture = path.join(repoRoot, "tests", "weather-search-santiago.json");
   const box = sandbox();

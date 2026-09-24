@@ -1,0 +1,3 @@
+# SuperNotch weather 1.0.0 native runtimes (sha256sum -c from this directory)
+6cab31b5dd01b41884b2c5dbc01f4a3daf15ab08ca88a32d134dafca902b35b2  aarch64/supernotch-weather
+6b3b57374f8f3cbab6bf904bf33e3d302e531848bfdacf00182a1d3ad6fa8cce  x86_64/supernotch-weather

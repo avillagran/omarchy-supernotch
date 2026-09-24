@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Native world-clock backend launcher; QML remains the presentation layer.
+set -euo pipefail
+
+SELF_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+case "$(uname -m)" in
+  aarch64|arm64) ARCH_DIR="aarch64" ;;
+  x86_64|amd64) ARCH_DIR="x86_64" ;;
+  *) echo "supernotch-clock: unsupported architecture: $(uname -m)" >&2; exit 1 ;;
+esac
+
+BIN="$SELF_DIR/bin/$ARCH_DIR/supernotch-clock"
+if [ ! -x "$BIN" ]; then
+  echo "supernotch-clock: missing binary for $ARCH_DIR ($BIN)" >&2
+  exit 1
+fi
+exec "$BIN" "$@"

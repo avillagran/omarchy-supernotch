@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+
 import qs.Commons
 import qs.Ui
 import "Model.js" as Model
@@ -10,7 +11,7 @@ Item {
   property var root: null
   property string pluginKey: ""
   width: parent ? parent.width : Style.space(900)
-  implicitHeight: Style.space(430)
+  implicitHeight: Style.space(550)
 
   property var cities: []
   property string activeId: ""
@@ -29,8 +30,58 @@ Item {
   property bool keyboardNavigationBlocked: searchField.activeFocus
   property string notchIcon: ""
   property string notchText: ""
+  property var chartData: null
+  property string mapLayer: "rain" // rain, clouds, temperature, wind, humidity
+  property int mapZoom: 1 // regional, local, close
+  property int frameIndex: 0
+  property bool playing: false
+  readonly property var currentFrame: chartData && chartData.frames && chartData.frames[frameIndex]
+    ? chartData.frames[frameIndex] : null
+
+  function persistMapView() {
+    exec(["map-view", mapLayer, String(mapZoom)])
+  }
+
+  // Expose to IPC for external control
+  function setMapLayer(layer) {
+    if (["rain", "precipitation", "clouds", "temperature", "wind", "humidity"].indexOf(layer) >= 0) {
+      var selected = layer === "precipitation" ? "rain" : layer
+      if (selected === mapLayer) return
+      mapLayer = selected
+      playing = false
+      persistMapView()
+      loadChart()
+    }
+  }
+
+  function setMapZoom(next) {
+    var selected = Math.max(1, Math.min(3, Math.round(next)))
+    if (selected === mapZoom) return
+    mapZoom = selected
+    playing = false
+    persistMapView()
+    loadChart()
+  }
+
+  function frameTime(utc) {
+    if (!utc) return ""
+    // The IFS request explicitly asks for UTC; never apply the desktop time zone twice.
+    var parts = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(utc)
+    return parts ? parts[3] + "/" + parts[2] + " " + parts[4] + ":" + parts[5] + " UTC" : String(utc)
+  }
+
 
   function tr(en, es) { return root && root.uiLang === "es" ? es : en }
+
+  function layerTitle() {
+    switch (m.mapLayer) {
+      case "clouds": return m.tr("CLOUD COVER", "COBERTURA DE NUBES")
+      case "temperature": return m.tr("TEMPERATURE", "TEMPERATURA")
+      case "wind": return m.tr("WIND SPEED", "VELOCIDAD DEL VIENTO")
+      case "humidity": return m.tr("HUMIDITY", "HUMEDAD")
+      default: return m.tr("PRECIPITATION", "PRECIPITACIÓN")
+    }
+  }
 
   function exec(args, callback) {
     if (!root || !pluginKey) return
@@ -57,6 +108,9 @@ Item {
 
   function applyState(state) {
     if (!state || !Array.isArray(state.cities)) return false
+    if (["rain", "clouds", "temperature", "wind", "humidity"].indexOf(state.mapLayer) >= 0)
+      mapLayer = state.mapLayer
+    if (state.mapZoom >= 1 && state.mapZoom <= 3) mapZoom = state.mapZoom
     var next = []
     for (var index = 0; index < state.cities.length; ++index) {
       var persisted = state.cities[index]
@@ -79,7 +133,7 @@ Item {
   function loadState(refreshAfter) {
     exec(["state"], function(out) {
       if (!m.applyState(m.parseOutput(out, null))) return
-      if (refreshAfter && m.pluginVisible) m.refreshAll()
+      if (refreshAfter && m.pluginVisible) { m.refreshAll(); m.loadChart() }
     })
   }
 
@@ -97,6 +151,57 @@ Item {
   function reportDate(report) {
     var localTime = report && report.current ? String(report.current.time || "") : ""
     return /^\d{4}-\d{2}-\d{2}/.test(localTime) ? localTime.slice(0, 10) : todayString()
+  }
+
+  // Show a cached map immediately, then fetch ten hourly forecast steps if needed.
+  function loadChart() {
+    var city = activeCity()
+    if (!pluginVisible || !city) return
+    var layer = m.mapLayer === "precipitation" ? "rain" : m.mapLayer
+    var zoom = m.mapZoom
+    var requestKey = city.id + "|" + layer + "|" + zoom
+    if (_chartLoading) {
+      if (requestKey !== _chartRequestKey) _chartQueued = true
+      return
+    }
+    _chartLoading = true
+    _chartQueued = false
+    _chartRequestKey = requestKey
+    playing = false
+    chartData = null
+    frameIndex = 0
+    var cityId = city.id
+    var args = [String(city.latitude), String(city.longitude), layer, String(zoom)]
+    exec(["chart"].concat(args), function(out) {
+      var current = m.pluginVisible && m.activeId === cityId && m.mapLayer === layer && m.mapZoom === zoom
+      var cached = m.parseOutput(out, null)
+      if (current && cached && Array.isArray(cached.frames) && cached.frames.length) {
+        m.chartData = cached
+        m.playing = cached.frames.length > 1
+        m.statusText = ""
+      }
+      if (current && (!m.chartData || m.chartData.snapshot)) {
+        m.statusText = m.chartData ? "" : m.tr("Loading forecast map", "Cargando mapa de pronóstico")
+        m.exec(["chart-live"].concat(args), function(freshOut) {
+          var fresh = m.parseOutput(freshOut, null)
+          if (m.pluginVisible && m.activeId === cityId && m.mapLayer === layer && m.mapZoom === zoom) {
+            if (fresh && Array.isArray(fresh.frames) && fresh.frames.length) {
+              m.chartData = fresh
+              m.frameIndex = 0
+              m.playing = fresh.frames.length > 1
+              m.statusText = ""
+            } else if (!m.chartData) {
+              m.statusText = m.tr("Forecast map unavailable", "Mapa de pronóstico no disponible")
+            }
+          }
+          m._chartLoading = false
+          if (m._chartQueued && m.pluginVisible) { m._chartQueued = false; m.loadChart() }
+        })
+      } else {
+        m._chartLoading = false
+        if (m._chartQueued && m.pluginVisible) { m._chartQueued = false; m.loadChart() }
+      }
+    })
   }
 
   function refreshCity(city) {
@@ -313,8 +418,9 @@ Item {
 
   onPluginVisibleChanged: {
     if (pluginVisible) loadState(true)
-    else cancelOverlay()
+    else { cancelOverlay(); playing = false }
   }
+  onActiveIdChanged: if (pluginVisible) { loadChart() }
   Component.onCompleted: loadState(false)
 
   Timer {
@@ -328,6 +434,18 @@ Item {
     running: m.pluginVisible
     repeat: true
     onTriggered: m.refreshAll()
+  }
+
+  // Rate-limit chart downloads to avoid process spawn storms
+  property bool _chartLoading: false
+  property bool _chartQueued: false
+  property string _chartRequestKey: ""
+
+  Timer {
+    interval: 950
+    repeat: true
+    running: m.pluginVisible && m.playing && m.chartData && m.chartData.frames && m.chartData.frames.length > 1
+    onTriggered: m.frameIndex = (m.frameIndex + 1) % m.chartData.frames.length
   }
 
   Column {
@@ -543,6 +661,275 @@ Item {
         border.width: 0
         Text { anchors.centerIn: parent; text: "󰐕"; color: Color.foreground; font.family: Style.fontFamily; font.pixelSize: Style.font.display }
         MouseArea { id: addMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: m.beginAddCity() }
+      }
+    }
+
+    Rectangle {
+      id: chartPanel
+      visible: m.mode === "cards" && m.cities.length > 0
+      width: parent.width
+      height: Style.space(230)
+      color: Color.background
+      radius: Style.cornerRadius
+
+      // Locally rendered land, sea, forecast overlay and coastlines; no Canvas animation.
+      Image {
+        id: chartImage
+        anchors.fill: parent
+        anchors.margins: Style.space(4)
+        fillMode: Image.PreserveAspectFit
+        smooth: true
+        cache: true
+        asynchronous: false // Local PNGs; synchronous decoding avoids blank frames during playback.
+        source: m.currentFrame && m.currentFrame.path ? "file://" + m.currentFrame.path : ""
+        opacity: status === Image.Ready ? 1.0 : 0.0
+        Behavior on opacity { NumberAnimation { duration: 200 } }
+      }
+
+      Repeater {
+        model: m.chartData && m.chartData.labels ? m.chartData.labels : []
+        Rectangle {
+          required property var modelData
+          x: chartImage.x + (chartImage.width - chartImage.paintedWidth) / 2
+            + modelData.x * chartImage.paintedWidth - width / 2
+          y: chartImage.y + (chartImage.height - chartImage.paintedHeight) / 2
+            + modelData.y * chartImage.paintedHeight - height / 2
+          width: placeName.implicitWidth + Style.space(10)
+          height: placeName.implicitHeight + Style.space(4)
+          radius: Style.space(3)
+          color: Qt.rgba(0, 0, 0, 0.62)
+          z: 4
+          visible: chartImage.status === Image.Ready
+            && (Math.abs(modelData.x - 0.5) > 0.07 || Math.abs(modelData.y - 0.5) > 0.10)
+          Text {
+            id: placeName
+            anchors.centerIn: parent
+            text: modelData.name
+            color: Color.foreground
+            font.family: Style.fontFamily; font.pixelSize: Style.font.caption
+          }
+        }
+      }
+
+      // City marker at the map center
+      Rectangle {
+        id: chartMarker
+        anchors.centerIn: parent
+        width: Style.space(8); height: width; radius: width / 2
+        color: Color.accent
+        border.width: 0
+        z: 5
+        visible: chartImage.status === Image.Ready
+      }
+      Text {
+        anchors.left: chartMarker.right; anchors.leftMargin: Style.space(6)
+        anchors.verticalCenter: chartMarker.verticalCenter
+        text: m.currentCity ? m.currentCity.name : ""
+        color: Color.foreground
+        font.family: Style.fontFamily; font.pixelSize: Style.font.body; font.bold: true
+        visible: chartMarker.visible
+        z: 6
+        Rectangle { anchors.fill: parent; anchors.margins: -Style.space(3); z: -1; radius: Style.space(3); color: Qt.rgba(0, 0, 0, 0.66) }
+      }
+
+      // Layer selector buttons
+      Row {
+        id: layerButtons
+        anchors.top: parent.top; anchors.left: parent.left; anchors.right: parent.right
+        anchors.margins: Style.space(10)
+        anchors.topMargin: Style.space(30)
+        spacing: Style.space(6)
+        z: 10
+
+        Repeater {
+          model: [
+            { key: "rain", icon: "󰖗", label: m.tr("RAIN", "LLUVIA") },
+            { key: "clouds", icon: "\uf0c2", label: m.tr("CLOUDS", "NUBES") },
+            { key: "temperature", icon: "\uf2c9", label: m.tr("TEMP", "TEMP") },
+            { key: "wind", icon: "󰖝", label: m.tr("WIND", "VIENTO") },
+            { key: "humidity", icon: "󰖎", label: m.tr("HUMID", "HUMED") }
+          ]
+
+          Rectangle {
+            required property var modelData
+            width: layerLabel.width + Style.space(16); height: Style.space(26)
+            radius: Style.space(4)
+            color: m.mapLayer === modelData.key ? Color.accent : "rgba(255,255,255,0.15)"
+            border.width: 0
+
+            Behavior on color { ColorAnimation { duration: 120 } }
+
+            Text {
+              id: layerLabel
+              anchors.centerIn: parent
+              text: modelData.icon + " " + modelData.label
+              color: m.mapLayer === modelData.key ? Color.background : Color.foreground
+              font.family: Style.fontFamily; font.pixelSize: Style.font.caption; font.bold: true
+            }
+
+            MouseArea {
+              anchors.fill: parent
+              cursorShape: Qt.PointingHandCursor
+              onClicked: { m.setMapLayer(modelData.key) }
+            }
+          }
+        }
+      }
+
+      Column {
+        anchors.right: parent.right; anchors.rightMargin: Style.space(10)
+        anchors.top: parent.top; anchors.topMargin: Style.space(64)
+        spacing: Style.space(5)
+        z: 11
+        Repeater {
+          model: [
+            { icon: "\uf067", delta: 1, allowed: m.mapZoom < 3 },
+            { icon: "\uf068", delta: -1, allowed: m.mapZoom > 1 }
+          ]
+          Rectangle {
+            required property var modelData
+            width: Style.space(28); height: width; radius: Style.space(4)
+            color: Color.menu.selectedBackground
+            opacity: modelData.allowed ? 0.95 : 0.35
+            Text { anchors.centerIn: parent; text: modelData.icon; color: Color.foreground; font.family: Style.fontFamily; font.pixelSize: Style.font.body }
+            MouseArea { anchors.fill: parent; enabled: modelData.allowed; cursorShape: Qt.PointingHandCursor; onClicked: m.setMapZoom(m.mapZoom + modelData.delta) }
+          }
+        }
+        Text { anchors.horizontalCenter: parent.horizontalCenter; text: "×" + Math.pow(2, m.mapZoom - 1); color: Color.foreground; font.family: Style.fontFamily; font.pixelSize: Style.font.caption }
+      }
+
+      Text {
+        anchors.top: parent.top; anchors.topMargin: Style.space(7)
+        anchors.right: parent.right; anchors.rightMargin: Style.space(12)
+        text: m.currentFrame && m.chartData ? Number(m.currentFrame.value).toFixed(m.mapLayer === "rain" ? 1 : 0) + " " + m.chartData.unit : ""
+        color: Color.foreground; font.family: Style.fontFamily; font.pixelSize: Style.font.body; font.bold: true
+        z: 11
+        Rectangle { anchors.fill: parent; anchors.margins: -Style.space(4); z: -1; radius: Style.space(3); color: Qt.rgba(0, 0, 0, 0.65) }
+      }
+
+      Text {
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.top: parent.top; anchors.topMargin: Style.space(72)
+        visible: m.mapLayer === "rain" && m.currentFrame && !m.currentFrame.hasSignal
+        text: m.tr("No measurable rain in view", "Sin lluvia medible en el mapa")
+        color: Color.foreground; font.family: Style.fontFamily; font.pixelSize: Style.font.caption
+        z: 10
+        Rectangle { anchors.fill: parent; anchors.margins: -Style.space(4); z: -1; radius: Style.space(3); color: Qt.rgba(0, 0, 0, 0.65) }
+      }
+
+      Row {
+        id: timeControls
+        anchors.left: parent.left; anchors.leftMargin: Style.space(12)
+        anchors.bottom: parent.bottom; anchors.bottomMargin: Style.space(30)
+        spacing: Style.space(8)
+        z: 10
+        visible: m.chartData && m.chartData.frames && m.chartData.frames.length > 1
+        Rectangle {
+          width: Style.space(26); height: Style.space(24); radius: Style.space(4)
+          color: Color.menu.selectedBackground
+          Text { anchors.centerIn: parent; text: m.playing ? "\uf04c" : "\uf04b"; color: Color.foreground; font.family: Style.fontFamily; font.pixelSize: Style.font.body }
+          MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: m.playing = !m.playing }
+        }
+        Text {
+          anchors.verticalCenter: parent.verticalCenter
+          width: Style.space(83)
+          text: m.currentFrame ? m.frameTime(m.currentFrame.valid) : ""
+          color: Color.foreground; font.family: Style.fontFamily; font.pixelSize: Style.font.caption; font.bold: true
+        }
+        Row {
+          anchors.verticalCenter: parent.verticalCenter
+          spacing: Style.space(4)
+          Repeater {
+            model: m.chartData && m.chartData.frames ? m.chartData.frames : []
+            Rectangle {
+              required property int index
+              width: Math.min(Style.space(28), Math.max(Style.space(8),
+                (chartPanel.width - Style.space(280)) / Math.max(1, m.chartData.frames.length)))
+              height: Style.space(7); radius: height / 2
+              color: index === m.frameIndex ? Color.accent : Color.menu.selectedBackground
+              MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: { m.playing = false; m.frameIndex = index } }
+            }
+          }
+        }
+        Text { anchors.verticalCenter: parent.verticalCenter; text: m.tr("FORECAST", "PRONÓSTICO"); color: Color.muted; font.family: Style.fontFamily; font.pixelSize: Style.font.caption }
+      }
+
+      Text {
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.bottom: parent.bottom; anchors.bottomMargin: Style.space(28)
+        visible: m.chartData && m.chartData.snapshot && m.currentFrame
+        text: m.tr("SNAPSHOT · ", "CAPTURA · ") + (m.currentFrame ? m.frameTime(m.currentFrame.valid) : "")
+        color: Color.foreground; font.family: Style.fontFamily; font.pixelSize: Style.font.caption
+        z: 10
+        Rectangle { anchors.fill: parent; anchors.margins: -Style.space(4); z: -1; radius: Style.space(3); color: Qt.rgba(0, 0, 0, 0.65) }
+      }
+
+      Rectangle {
+        anchors.left: parent.left; anchors.leftMargin: Style.space(12)
+        anchors.bottom: timeControls.top; anchors.bottomMargin: Style.space(7)
+        width: legendRow.implicitWidth + Style.space(12)
+        height: legendRow.implicitHeight + Style.space(8)
+        radius: Style.space(3); color: Qt.rgba(0, 0, 0, 0.62)
+        visible: m.chartData && m.chartData.legend
+        z: 10
+        Row {
+          id: legendRow
+          anchors.centerIn: parent; spacing: Style.space(8)
+          Repeater {
+            model: m.chartData && m.chartData.legend ? m.chartData.legend : []
+            Row {
+              required property var modelData
+              spacing: Style.space(3)
+              Rectangle { anchors.verticalCenter: parent.verticalCenter; width: Style.space(9); height: width; radius: Style.space(2); color: modelData.color }
+              Text { text: modelData.label; color: Color.foreground; font.family: Style.fontFamily; font.pixelSize: Style.font.caption }
+            }
+          }
+          Text { text: m.chartData ? m.chartData.unit : ""; color: Color.muted; font.family: Style.fontFamily; font.pixelSize: Style.font.caption }
+        }
+      }
+
+      Column {
+        anchors.right: parent.right; anchors.rightMargin: Style.space(12)
+        anchors.bottom: timeControls.top; anchors.bottomMargin: Style.space(8)
+        spacing: Style.space(3)
+        visible: m.chartData && m.chartData.scaleKm
+        z: 10
+        Text {
+          anchors.right: parent.right
+          visible: m.chartData && m.chartData.flowMarkers
+          text: m.tr("ARROWS: 10 M WIND", "FLECHAS: VIENTO 10 M")
+          color: Color.foreground; font.family: Style.fontFamily; font.pixelSize: Style.font.caption
+          Rectangle { anchors.fill: parent; anchors.margins: -Style.space(3); z: -1; radius: Style.space(3); color: Qt.rgba(0, 0, 0, 0.62) }
+        }
+        Text { anchors.right: parent.right; text: m.chartData ? m.chartData.scaleKm + " km" : ""; color: Color.foreground; font.family: Style.fontFamily; font.pixelSize: Style.font.caption }
+        Rectangle { width: m.chartData ? m.chartData.scalePx * chartImage.paintedWidth / 1024 : 0; height: Style.space(2); color: Color.foreground }
+      }
+
+      // Loading indicator while the bounded API request or PNG render completes.
+      Text {
+        anchors.centerIn: parent
+        visible: m._chartLoading && chartImage.status !== Image.Ready
+        text: "\uf110"
+        color: Color.accent; font.family: Style.fontFamily; font.pixelSize: Style.font.display
+        RotationAnimator on rotation { from: 0; to: 360; duration: 1200; loops: Animation.Infinite; running: parent.visible }
+      }
+
+      Text {
+        x: Style.space(14); y: Style.space(8)
+        text: (m.currentCity ? m.currentCity.name.toUpperCase() + " · " : "") + layerTitle()
+        color: Color.muted; font.family: Style.fontFamily; font.pixelSize: Style.font.caption; font.bold: true
+        z: 10
+        Rectangle { anchors.fill: parent; anchors.margins: -Style.space(4); z: -1; radius: Style.space(3); color: Qt.rgba(0, 0, 0, 0.45) }
+      }
+
+      Text {
+        anchors.left: parent.left; anchors.bottom: parent.bottom; anchors.margins: Style.space(10)
+        width: parent.width - Style.space(20)
+        text: (m.chartData && m.chartData.stale ? m.tr("STALE · ", "ANTIGUO · ") : "") + (m.chartData && m.chartData.licence ? m.chartData.licence : "ECMWF IFS · Open-Meteo CC-BY-4.0") + " · Natural Earth"
+        color: Color.foreground; font.family: Style.fontFamily; font.pixelSize: Style.font.caption
+        elide: Text.ElideRight
+        z: 10
+        Rectangle { anchors.fill: parent; anchors.margins: -Style.space(4); z: -1; radius: Style.space(3); color: Qt.rgba(0, 0, 0, 0.45) }
       }
     }
 

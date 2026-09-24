@@ -18,6 +18,14 @@ Item {
     })
     root.run(["clip-enabled"], function (out) { m.recordingEnabled = (out || "").trim() !== "false" })
   }
+
+  // Auto-refresh clipboard list every 2s while panel is open
+  Timer {
+    interval: 2000
+    running: root && root.opened
+    repeat: true
+    onTriggered: m.load()
+  }
   Component.onCompleted: if (root) load()
   onRootChanged: if (root) load()
   Connections { target: root; function onOpenedChanged() { if (root && root.opened) load() } }

@@ -1,5 +1,6 @@
 import QtQuick
 import Quickshell
+import QtQuick.Effects
 import qs.Commons
 import qs.Ui
 import "Model.js" as Model
@@ -46,13 +47,45 @@ Item {
     viewYear = next.year; viewMonth = next.month
   }
   function moveYear(delta) { moveMonth(delta * 12) }
+  // Equal Earth preserves relative areas; the packaged Natural Earth geometry
+  // is projected with this same formula.
+  function equalEarthPoint(longitude, latitude, width, height) {
+    var phi = Number(latitude) * Math.PI / 180
+    var theta = Math.asin(Math.sqrt(3) / 2 * Math.sin(phi))
+    var t2 = theta * theta
+    var denominator = 3 * (1.340264 - 0.243318 * t2 + 0.006251 * t2 * t2 * t2 + 0.034164 * t2 * t2 * t2 * t2)
+    var x = 2 * Math.sqrt(3) * (Number(longitude) * Math.PI / 180) * Math.cos(theta) / denominator
+    var y = 1.340264 * theta - 0.081106 * theta * t2 + 0.000893 * theta * t2 * t2 * t2 + 0.003796 * theta * t2 * t2 * t2 * t2
+    return { x: width * (x + 2.72) / 5.44, y: height * (1.39 - y) / 2.78 }
+  }
+
+  function clockMinutes(clock) { var parts = String(clock || "00:00").split(":"); return Number(parts[0]) * 60 + Number(parts[1]) }
 
   // ── World clocks: local capital + user-added cities ──
   // Data comes from the helper: `worldclock-list` prints JSON
-  // [{name, tz, time, local}] — local first (system timezone).
+  // [{name, tz, time, date, local, primary}] — system timezone stays first.
   property var worldClocks: []
+  readonly property var primaryClock: {
+    for (var i = 0; i < worldClocks.length; i++)
+      if (worldClocks[i].primary) return worldClocks[i]
+    return null
+  }
+  onPrimaryClockChanged: { syncToday(); pushNotch() }
   property bool editingClocks: false
   property var zoneMatches: []
+  property int zoneIndex: 0
+  property int zoneSearchGeneration: 0
+
+  function syncToday() {
+    var clock = primaryClock
+    if (!clock || !/^\d{4}-\d{2}-\d{2}$/.test(clock.date || "")) return
+    var parts = clock.date.split("-")
+    var day = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]), 12)
+    if (Model.keyForDate(day) !== clock.date || Model.keyForDate(day) === todayKey) return
+    var follow = viewingCurrentMonth
+    today = day
+    if (follow) goToToday()
+  }
 
   function loadClocks() {
     if (!root) return
@@ -63,18 +96,38 @@ Item {
   function searchZones(q) {
     if (!root) return
     if (!q) { m.zoneMatches = []; return }
+    var generation = ++m.zoneSearchGeneration
     root.run(["worldclock-zones", q], function (out) {
+      if (generation !== m.zoneSearchGeneration || !m.editingClocks) return
       var lines = (out || "").trim().split("\n").filter(function (s) { return s.length > 0 })
       m.zoneMatches = lines.slice(0, 8)
+      m.zoneIndex = 0
     })
   }
   function addClock(tz) {
     if (!root) return
-    root.run(["worldclock-add", tz], function () { m.zoneMatches = []; m.loadClocks() })
+    root.run(["worldclock-add", tz], function (out) {
+      try {
+        var clocks = JSON.parse(out.trim())
+        if (!Array.isArray(clocks)) return
+        m.worldClocks = clocks
+      } catch (e) { m.loadClocks(); return }
+      m.zoneMatches = []
+      m.editingClocks = false
+      zoneField.text = ""
+    })
   }
   function removeClock(tz) {
     if (!root) return
-    root.run(["worldclock-del", tz], function () { m.loadClocks() })
+    root.run(["worldclock-del", tz], function (out) {
+      try { m.worldClocks = JSON.parse(out.trim()) } catch (e) { m.loadClocks() }
+    })
+  }
+  function selectClock(tz) {
+    if (!root || !tz) return
+    root.run(["worldclock-select", tz], function (out) {
+      try { m.worldClocks = JSON.parse(out.trim()) } catch (e) { m.loadClocks() }
+    })
   }
   Component.onCompleted: if (root) { loadClocks(); pushNotch() }
   onRootChanged: if (root) loadClocks()
@@ -92,10 +145,12 @@ Item {
   property string notchIcon: ""
   property string notchText: {
     var lang = root ? root.uiLang : "en"
-    var d = m.now
-    var hh = (d.getHours() < 10 ? "0" : "") + d.getHours()
-    var mm = (d.getMinutes() < 10 ? "0" : "") + d.getMinutes()
-    var timeStr = hh + ":" + mm
+    var d = m.today
+    var primary = m.primaryClock
+    var localNow = m.now
+    var hh = (localNow.getHours() < 10 ? "0" : "") + localNow.getHours()
+    var mm = (localNow.getMinutes() < 10 ? "0" : "") + localNow.getMinutes()
+    var timeStr = primary && primary.time ? primary.time : hh + ":" + mm
     if (m.showDate) {
       if (lang === "es") {
         var days = ["dom","lun","mar","mié","jue","vie","sáb"]
@@ -113,6 +168,8 @@ Item {
   SystemClock {
     precision: SystemClock.Minutes
     onDateChanged: {
+      m.now = date
+      if (root) { m.loadClocks(); return }
       if (Model.keyForDate(date) === String(m.todayKey)) return
       var follow = m.viewingCurrentMonth
       m.today = date
@@ -207,10 +264,10 @@ Item {
                     id: cityTime
                     anchors.horizontalCenter: parent.horizontalCenter
                     text: modelData.time
-                    color: modelData.local ? Color.accent : Color.foreground
+                    color: modelData.primary ? Color.accent : Color.urgent
                     font.family: Style.fontFamily
                     font.pixelSize: Style.font.display
-                    font.bold: modelData.local
+                    font.bold: modelData.primary
                   }
 
                   // remove button (hover, non-local only)
@@ -238,16 +295,19 @@ Item {
                     anchors.fill: parent
                     z: 0
                     hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: m.selectClock(modelData.tz)
                   }
                 }
 
                 Text {
                   anchors.horizontalCenter: parent.horizontalCenter
                   text: modelData.name.toUpperCase()
-                  color: Qt.darker(Color.foreground, 1.5)
+                  color: modelData.primary ? Color.accent : Color.urgent
                   font.family: Style.fontFamily
                   font.pixelSize: Style.font.caption
                   font.letterSpacing: 1
+                  MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: m.selectClock(modelData.tz) }
                 }
               }
             }
@@ -265,7 +325,55 @@ Item {
                 anchors.margins: -Style.space(6)
                 hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
-                onClicked: { m.editingClocks = !m.editingClocks; if (!m.editingClocks) m.zoneMatches = [] }
+                onClicked: { m.editingClocks = !m.editingClocks; if (!m.editingClocks) { m.zoneSearchGeneration++; m.zoneMatches = [] } else zoneField.forceActiveFocus() }
+              }
+            }
+          }
+
+          Rectangle {
+            id: timeZoneRail
+            visible: m.worldClocks.length > 0
+            width: Math.min(calendarScroll.width, Style.space(980)); height: Style.space(290)
+            anchors.horizontalCenter: parent.horizontalCenter
+            radius: Style.cornerRadius; color: Color.menu.selectedBackground; border.width: 0
+            Text { x: Style.space(14); y: Style.space(10); text: "WORLD TIME · EQUAL EARTH"; color: Color.muted; font.family: Style.fontFamily; font.pixelSize: Style.font.caption; font.bold: true }
+            Item {
+              id: worldMap
+              width: Math.min(parent.width - Style.space(24), (timeLabels.y - y - Style.space(8)) * 1200 / 570)
+              height: timeLabels.y - y - Style.space(8)
+              anchors.horizontalCenter: parent.horizontalCenter; anchors.top: parent.top; anchors.topMargin: Style.space(30)
+              Image {
+                id: worldMapImage
+                anchors.fill: parent; source: "../../assets/world-equal-earth.svg"; fillMode: Image.PreserveAspectFit
+                layer.enabled: true
+                layer.effect: MultiEffect { colorization: 1.0; colorizationColor: Color.foreground; opacity: 0.62 }
+              }
+              Repeater {
+                model: m.worldClocks
+                Item {
+                  required property var modelData
+                  property bool mapped: typeof modelData.latitude === "number" && typeof modelData.longitude === "number"
+                  property var point: mapped ? m.equalEarthPoint(modelData.longitude, modelData.latitude,
+                    worldMapImage.paintedWidth, worldMapImage.paintedHeight) : ({ x: 0, y: 0 })
+                  x: worldMapImage.x + (worldMapImage.width - worldMapImage.paintedWidth) / 2 + point.x - width / 2
+                  y: worldMapImage.y + (worldMapImage.height - worldMapImage.paintedHeight) / 2 + point.y - height / 2
+                  width: Math.max(Style.space(80), mapCityLabel.implicitWidth); height: Style.space(34)
+                  visible: mapped
+                  Text { anchors.centerIn: parent; text: "󰧞"; color: modelData.primary ? Color.accent : Color.urgent; font.family: Style.fontFamily; font.pixelSize: Style.font.title }
+                  Text { id: mapCityLabel; anchors.top: parent.verticalCenter; anchors.topMargin: Style.space(2); anchors.horizontalCenter: parent.horizontalCenter; text: modelData.name + "  " + modelData.time; color: modelData.primary ? Color.accent : Color.urgent; font.family: Style.fontFamily; font.pixelSize: Style.font.caption; font.bold: true; horizontalAlignment: Text.AlignHCenter }
+                  MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: m.selectClock(modelData.tz) }
+                }
+              }
+            }
+            Row {
+              id: timeLabels
+              anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.margins: Style.space(9)
+              spacing: Style.space(8)
+              Repeater {
+                model: m.worldClocks
+                Text { required property var modelData; width: Math.max(Style.space(54), (timeLabels.width - Style.space(8) * Math.max(0, m.worldClocks.length - 1)) / Math.max(1, m.worldClocks.length)); text: modelData.name.toUpperCase() + "  " + modelData.time; color: modelData.primary ? Color.accent : Color.urgent; font.family: Style.fontFamily; font.pixelSize: Style.font.caption; horizontalAlignment: Text.AlignHCenter; elide: Text.ElideRight
+                  MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: m.selectClock(modelData.tz) }
+                }
               }
             }
           }
@@ -276,36 +384,72 @@ Item {
             spacing: Style.space(4)
             visible: m.editingClocks
 
+            Timer { id: zoneDebounce; interval: 250; onTriggered: m.searchZones(zoneField.text.trim()) }
+
             TextField {
               id: zoneField
-              width: Style.space(240)
-              height: Style.space(30)
+              width: Math.min(calendarScroll.width, Style.space(420))
+              height: Style.space(32)
+              anchors.horizontalCenter: parent.horizontalCenter
               placeholderText: root ? root.t(root.uiLang, "addCity") : "Add city"
               Rectangle { anchors.fill: parent; radius: Style.space(8); color: Color.menu.selectedBackground; border.color: Color.popups.border; border.width: 1 }
-              onTextChanged: m.searchZones(text.trim())
+              onTextChanged: {
+                m.zoneSearchGeneration++
+                zoneDebounce.stop()
+                m.zoneIndex = 0
+                m.zoneMatches = []
+                if (text.trim().length >= 2) zoneDebounce.restart()
+              }
+              Keys.onPressed: function(event) {
+                if (event.key === Qt.Key_Down && m.zoneMatches.length) {
+                  m.zoneIndex = Math.min(m.zoneMatches.length - 1, m.zoneIndex + 1)
+                  event.accepted = true
+                } else if (event.key === Qt.Key_Up && m.zoneMatches.length) {
+                  m.zoneIndex = Math.max(0, m.zoneIndex - 1)
+                  event.accepted = true
+                } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                  if (m.zoneMatches[m.zoneIndex]) m.addClock(m.zoneMatches[m.zoneIndex])
+                  event.accepted = true
+                } else if (event.key === Qt.Key_Escape) {
+                  m.editingClocks = false
+                  m.zoneSearchGeneration++
+                  m.zoneMatches = []
+                  event.accepted = true
+                }
+              }
             }
 
-            Flow {
+            ListView {
+              id: zoneList
               anchors.horizontalCenter: parent.horizontalCenter
-              width: Style.space(360)
+              width: zoneField.width
+              height: visible ? Math.min(Style.space(180), contentHeight) : 0
+              visible: m.zoneMatches.length > 0
+              clip: true
               spacing: Style.space(6)
-              Repeater {
-                model: m.zoneMatches
-                Text {
-                  required property var modelData
-                  padding: Style.space(6)
-                  text: modelData
-                  color: zoneMouse.containsMouse ? Style.hoverStateColor(Color.foreground, Color.accent) : Qt.darker(Color.foreground, 1.4)
-                  font.family: Style.fontFamily
-                  font.pixelSize: Style.font.bodySmall
-                  Rectangle { anchors.fill: parent; radius: Style.space(6); color: Color.menu.selectedBackground; border.color: Color.popups.border; border.width: 1 }
-                  MouseArea {
-                    id: zoneMouse
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: { m.addClock(modelData); zoneField.text = "" }
-                  }
+              model: m.zoneMatches
+              currentIndex: m.zoneIndex
+              delegate: Rectangle {
+                required property int index
+                required property var modelData
+                width: zoneList.width
+                height: Style.space(36)
+                radius: Style.cornerRadius
+                color: index === m.zoneIndex || zoneMouse.containsMouse ? Color.menu.selectedBackground : "transparent"
+                Row {
+                  anchors.fill: parent
+                  anchors.leftMargin: Style.space(10)
+                  anchors.rightMargin: Style.space(10)
+                  spacing: Style.space(10)
+                  Text { anchors.verticalCenter: parent.verticalCenter; width: parent.width * 0.38; text: modelData.split("/").pop().replace(/_/g, " "); color: Color.foreground; elide: Text.ElideRight; font.family: Style.fontFamily; font.pixelSize: Style.font.body }
+                  Text { anchors.verticalCenter: parent.verticalCenter; width: parent.width * 0.56; text: modelData; color: Color.muted; elide: Text.ElideRight; font.family: Style.fontFamily; font.pixelSize: Style.font.bodySmall }
+                }
+                MouseArea {
+                  id: zoneMouse
+                  anchors.fill: parent
+                  hoverEnabled: true
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: m.addClock(modelData)
                 }
               }
             }

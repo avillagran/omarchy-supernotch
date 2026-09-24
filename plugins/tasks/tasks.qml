@@ -22,6 +22,32 @@ Item {
   Connections { target: root; function onOpenedChanged() { if (root && root.opened) load() } }
 
   property var list: []
+  property int selectedIndex: -1
+  property bool pluginVisible: root && root.opened && root.activePluginItem === m
+  property bool keyboardNavigationBlocked: taskInput.activeFocus
+
+  function selectedTask() {
+    return selectedIndex >= 0 && selectedIndex < list.length ? list[selectedIndex] : null
+  }
+  function moveTaskSelection(delta) {
+    if (!list.length) return
+    selectedIndex = (selectedIndex + delta + list.length) % list.length
+    taskList.contentY = Math.max(0, Math.min(Math.max(0, taskList.contentHeight - taskList.height), selectedIndex * Style.space(34)))
+  }
+  function toggleSelectedTask() {
+    var task = selectedTask()
+    if (!task || !root) return
+    root.run([task.done ? "tasks-untoggle" : "tasks-toggle", String(selectedIndex)], function () { m.load() })
+  }
+  function addTask() {
+    var value = taskInput.text.trim()
+    if (!value || !root) return
+    root.run(["tasks-add", value], function () {
+      m.load()
+      taskInput.text = ""
+      taskInput.forceActiveFocus()
+    })
+  }
   function pushNotch() {
     var left = m.list.filter(function (x) { return !x.done }).length
     m.notchText = left + " pendientes"
@@ -32,6 +58,7 @@ Item {
   property string notchText: "0 pendientes"
   onListChanged: pushNotch()
   onNotchTextChanged: if (root && pluginKey) root.updateNotchData(pluginKey, notchIcon, notchText)
+  onPluginVisibleChanged: if (pluginVisible) Qt.callLater(function () { taskInput.forceActiveFocus() })
 
   Column {
     id: mainCol
@@ -40,10 +67,24 @@ Item {
     spacing: Style.space(8)
 
     TextField {
+      id: taskInput
       width: parent.width; height: Style.space(34)
       placeholderText: root ? root.t(root.uiLang, "newTask") : "New task"
       Rectangle { anchors.fill: parent; radius: Style.space(8); color: Color.menu.selectedBackground; border.color: Color.popups.border; border.width: 1 }
-      onAccepted: { if (root) root.run(["tasks-add", text], function(){ load() }); text = "" }
+      onAccepted: m.addTask()
+      Keys.onPressed: function(event) {
+        // TextField owns Escape while focused; return it to the panel close action.
+        if (event.key === Qt.Key_Escape) {
+          if (root && root.close) root.close()
+          event.accepted = true
+        } else if (event.key === Qt.Key_Down && taskInput.text.length === 0) {
+          m.moveTaskSelection(1); event.accepted = true
+        } else if (event.key === Qt.Key_Up && taskInput.text.length === 0) {
+          m.moveTaskSelection(-1); event.accepted = true
+        } else if (event.key === Qt.Key_Space && taskInput.text.length === 0 && m.selectedTask()) {
+          m.toggleSelectedTask(); event.accepted = true
+        }
+      }
     }
 
     Text {
@@ -52,6 +93,7 @@ Item {
     }
 
     Flickable {
+      id: taskList
       width: parent.width; height: Math.min(360, col.implicitHeight)
       contentHeight: col.implicitHeight; clip: true
       Column {
@@ -63,10 +105,10 @@ Item {
             Rectangle {
               width: Style.space(22); height: Style.space(22); radius: Style.space(11)
               anchors.verticalCenter: parent.verticalCenter
-              color: modelData.done ? Color.accent : "transparent"
+              color: modelData.done ? Color.accent : (index === m.selectedIndex ? Color.menu.selectedBackground : "transparent")
               border.color: Color.popups.border; border.width: 1
               Text { anchors.centerIn: parent; text: modelData.done ? "󰄳" : ""; color: Color.background; font.family: Style.fontFamily; font.bold: true; font.pixelSize: Style.font.bodySmall }
-              MouseArea { anchors.fill: parent; onClicked: if (root) root.run([modelData.done ? "tasks-untoggle" : "tasks-toggle", String(index)], function(){ load() }) }
+              MouseArea { anchors.fill: parent; onClicked: { m.selectedIndex = index; if (root) root.run([modelData.done ? "tasks-untoggle" : "tasks-toggle", String(index)], function(){ load() }) } }
             }
             Text {
               text: modelData.text

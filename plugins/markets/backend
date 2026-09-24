@@ -109,6 +109,42 @@ def symbol(value):
         raise ValueError("invalid symbol")
     return value
 
+# Map common crypto shorthand to Yahoo Finance symbols
+CRYPTO_SYMBOL_MAP = {
+    "BTC": "BTC-USD",
+    "ETH": "ETH-USD",
+    "SOL": "SOL-USD",
+    "XRP": "XRP-USD",
+    "ADA": "ADA-USD",
+    "DOGE": "DOGE-USD",
+    "DOT": "DOT-USD",
+    "AVAX": "AVAX-USD",
+    "MATIC": "MATIC-USD",
+    "LINK": "LINK-USD",
+    "UNI": "UNI-USD",
+    "ATOM": "ATOM-USD",
+    "LTC": "LTC-USD",
+    "BCH": "BCH-USD",
+    "XLM": "XLM-USD",
+    "ALGO": "ALGO-USD",
+    "VET": "VET-USD",
+    "FIL": "FIL-USD",
+    "TRX": "TRX-USD",
+    "ETC": "ETC-USD",
+    "XMR": "XMR-USD",
+    "APT": "APT-USD",
+    "ARB": "ARB-USD",
+    "OP": "OP-USD",
+    "INJ": "INJ-USD",
+    "SUI": "SUI-USD",
+    "SEI": "SEI-USD",
+    "TIA": "TIA-USD",
+}
+
+def yahoo_symbol(ticker):
+    """Convert user-facing crypto shorthand to Yahoo Finance symbol."""
+    return CRYPTO_SYMBOL_MAP.get(ticker, ticker)
+
 
 def positive_number(value, label):
     try:
@@ -272,9 +308,10 @@ def fetch_yahoo(ticker, provider_range, interval):
         return read_json(fixture)
     if os.environ.get("MARKETS_OFFLINE") == "1":
         raise OSError("offline fixture mode")
+    yahoo_ticker = yahoo_symbol(ticker)
     last_error = None
     for host in ("query1.finance.yahoo.com", "query2.finance.yahoo.com"):
-        url = (f"https://{host}/v8/finance/chart/" + quote(ticker, safe="") +
+        url = (f"https://{host}/v8/finance/chart/" + quote(yahoo_ticker, safe="") +
                f"?range={provider_range}&interval={interval}&includePrePost=false&events=div%2Csplits")
         request = Request(url, headers={"User-Agent": "Mozilla/5.0 SuperNotch/1.0", "Accept": "application/json"})
         try:
@@ -345,6 +382,7 @@ def asset_snapshot(state, ticker, force=False):
     try:
         payload, stale, fetched_at, warning = market_payload(ticker, "1W", force)
         quote_data = parse_quote(payload)
+        quote_data["symbol"] = ticker
         chart_data = parse_chart(payload)
         result = {**quote_data, "sparkline": [point["value"] for point in chart_data["points"]],
                   "stale": stale, "fetchedAt": fetched_at, "updatedAt": fetched_at}
@@ -363,6 +401,7 @@ def cached_asset_snapshot(state, ticker):
         fetched_at = int(cached.get("fetchedAt", 0))
         payload = cached["payload"]
         quote_data = parse_quote(payload)
+        quote_data["symbol"] = ticker
         chart_data = parse_chart(payload)
         result = {**quote_data, "sparkline": [point["value"] for point in chart_data["points"]],
                   "stale": int(time.time()) - fetched_at >= CACHE_TTL,

@@ -60,8 +60,8 @@ BarWidget {
     var proc = Qt.createQmlObject(
       "import Quickshell.Io; import QtQuick; Process { " +
       "property string collected: \"\"; property var cb: null; " +
-      "stdout: SplitParser { onRead: function(d){ collected += d } } " +
-      "onExited: function(){ if (this.cb) this.cb(collected) } }",
+      "stdout: SplitParser { onRead: function(d){ collected += d + '\\n' } } " +
+      "onExited: function(){ try { if (this.cb) this.cb(collected) } finally { this.destroy() } } }",
       root, "snBarProc")
     if (!proc) return null
     proc.collected = ""; proc.cb = onText
@@ -262,6 +262,17 @@ BarWidget {
           MouseArea { anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: { if (panelLoader.item && panelLoader.item.openPlugin) panelLoader.item.openPlugin(modelData.key); else root.clickToggle() } }
         }
       }
+    }
+
+    // Plugin metadata arrives asynchronously. Avoid a blank outlined pill
+    // while the panel is initializing.
+    Text {
+      anchors.centerIn: parent
+      visible: !root.bar.vertical && pill.enabledList.length === 0
+      text: root.barIcon
+      color: Color.foreground
+      font.family: Style.fontFamily
+      font.pixelSize: Style.font.body
     }
 
     // ── vertical (notch) mode: icons only, stacked top→bottom ──

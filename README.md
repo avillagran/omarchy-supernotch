@@ -8,8 +8,8 @@ A theme-aware command center for Omarchy. SuperNotch adds a center bar pill that
 
 - Centered notch pill with click-to-open behavior, live plugin status, configurable width, center gap, order, and left/right placement.
 - Music controls through MPRIS, including track metadata, seeking, and transport controls.
-- World clocks with timezone search and removal controls.
-- Multi-city weather powered by Open-Meteo, with location management, forecasts, and a compact notch status.
+- World clocks backed by a bundled Rust helper, with searchable IANA timezones, system tzdata coordinates, and selectable map markers.
+- Multi-city Open-Meteo/ECMWF IFS forecasts rendered locally by bundled Rust binaries, with hourly map playback, location management, and a compact notch status.
 - Clipboard history with sensitive-content masking and a persistent recording pause toggle.
 - RSS and Atom news reader with saved sources and keyboard navigation.
 - Market watchlist and optional portfolio lots, cached Yahoo Finance data, favorites-only notch ticker, animated price/percentage rotation, overview sparklines, and detail charts.

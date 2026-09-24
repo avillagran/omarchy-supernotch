@@ -54,8 +54,8 @@ Panel {
     var proc = Qt.createQmlObject(
       "import Quickshell.Io; import QtQuick; Process { " +
       "property string collected: \"\"; property var cb: null; " +
-      "stdout: SplitParser { onRead: function(d){ collected += d } } " +
-      "onExited: function(){ if (this.cb) this.cb(collected) } }",
+      "stdout: SplitParser { onRead: function(d){ collected += d + '\\n' } } " +
+      "onExited: function(){ try { if (this.cb) this.cb(collected) } finally { this.destroy() } } }",
       root, "snProc")
     if (!proc) return null
     proc.collected = ""; proc.cb = onText
@@ -281,7 +281,17 @@ Panel {
   function pluginHeight() {
     var item = root.contentRefs[root.current]
     var h = (item && item.implicitHeight > 0) ? item.implicitHeight : 360
-    return Style.space(52) + h
+    var desired = Style.space(52) + h
+    // The clock's autocomplete grows its Flickable content. Keep the card
+    // on-screen and let that content scroll instead of clipping the calendar.
+    if (item && item.pluginKey === "clock" && panel && panel.screenH > 0) {
+      var available = panel.screenH - Style.space(8)
+      if (panel.barPos === "top") available -= panel.anchorScreenPos.y + panel.anchorH
+      else if (panel.barPos === "bottom") available -= panel.barH - panel.anchorScreenPos.y
+      available = Math.max(Style.space(180), available)
+      return Math.min(desired, available)
+    }
+    return desired
   }
   readonly property int fullW: root.panelWidth
   readonly property int fullH: root.pluginHeight()

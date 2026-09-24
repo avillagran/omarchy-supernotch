@@ -43,7 +43,7 @@ test("Open-Meteo report is normalized with the system weather model", () => {
   const report = JSON.parse(fs.readFileSync(path.join(repoRoot, "tests/weather-forecast.json"), "utf8"));
   const weather = model.cityWeather(report, "2026-09-04");
   assert.deepEqual(JSON.parse(JSON.stringify(weather)), {
-    temp: "18", feels: "17", humidity: "61", wind: "12", code: 2, isDay: 1,
+    temp: "18", feels: "17", humidity: "61", wind: "12", precipitation: 0, code: 2, isDay: 1,
     icon: "", maxC: "21", minC: "9",
     forecast: [
       { date: "2026-09-05", maxC: "20", minC: "9", icon: "" },

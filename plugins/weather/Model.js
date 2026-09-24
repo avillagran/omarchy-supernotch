@@ -168,6 +168,7 @@ function openMeteoCurrentCondition(dailyForecastReport) {
     windspeedKmph: roundedTemp(current.wind_speed_10m),
     windspeedMiles: roundedTemp(current.wind_speed_10m * 0.621371),
     humidity: roundedTemp(current.relative_humidity_2m),
+    precipitation: current.precipitation === undefined || current.precipitation === null ? 0 : Number(current.precipitation),
     openMeteoWeatherCode: current.weather_code,
     isDay: current.is_day
   }
@@ -272,6 +273,7 @@ function cityWeather(report, todayString) {
     feels: current.FeelsLikeC,
     humidity: current.humidity,
     wind: current.windspeedKmph,
+    precipitation: current.precipitation,
     code: current.openMeteoWeatherCode,
     isDay: current.isDay,
     icon: currentIcon(current, ""),

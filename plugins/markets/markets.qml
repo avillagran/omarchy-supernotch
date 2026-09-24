@@ -727,20 +727,7 @@ Item {
               }
             }
 
-            Rectangle {
-              visible: m.favorites.length > 0
-              width: m.compact ? parent.width : (parent.width - Style.space(8)) / 2
-              height: Style.space(78)
-              radius: Style.cornerRadius * 1.5
-              color: Color.popups.background
-              border.color: Color.popups.border
-              border.width: 1
-              Column {
-                anchors.fill: parent; anchors.margins: Style.space(10); spacing: Style.space(4)
-                Text { text: "FAVORITES  ·  " + m.favorites.length; color: Color.muted; font.family: Style.fontFamily; font.pixelSize: Style.font.caption; font.bold: true }
-                Text { width: parent.width; text: m.favoriteSymbols(); color: Color.foreground; font.family: Style.fontFamily; font.pixelSize: Style.font.body; elide: Text.ElideRight }
-              }
-            }
+
           }
 
           Text { visible: errorMessage !== ""; text: errorMessage + (assets.length ? " · showing cached data where available" : ""); color: Color.foreground; font.family: Style.fontFamily; font.pixelSize: Style.font.bodySmall }
@@ -777,7 +764,7 @@ Item {
                     spacing: Style.space(12)
                     Column {
                       width: m.compact ? Style.space(66) : Style.space(92); anchors.verticalCenter: parent.verticalCenter
-                      Text { text: (modelData.favorite ? "󰓎 " : "") + modelData.symbol; color: modelData.favorite ? Color.accent : Color.foreground; font.family: Style.fontFamily; font.pixelSize: Style.font.body; font.bold: true }
+                      Text { text: (modelData.favorite ? "󰓎" : "󰓏") + "  " + modelData.symbol; color: modelData.favorite ? Color.accent : Color.foreground; font.family: Style.fontFamily; font.pixelSize: Style.font.body; font.bold: true }
                       Text { text: modelData.stale ? "cached" : (modelData.error ? "unavailable" : modelData.currency); color: modelData.stale ? Color.accent : Color.muted; font.family: Style.fontFamily; font.pixelSize: Style.font.caption }
                     }
                     // Every listed instrument gets a chart, including on narrow

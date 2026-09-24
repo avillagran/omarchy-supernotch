@@ -95,16 +95,22 @@ Item {
         cpuHistory = appendHistory(cpuHistory, cpuPercent)
         ramHistory = appendHistory(ramHistory, ramPercent)
         cpuGraph.requestPaint(); ramGraph.requestPaint()
-        selectedIndex = 0
-        for (var i = 0; i < processes.length; i++) if (processes[i].pid === keepPid) { selectedIndex = i; break }
-        processList.currentIndex = selectedIndex
-        if (processes.length) processList.positionViewAtIndex(selectedIndex, ListView.Contain)
+        restoreSelection(keepPid)
         notchText = "CPU " + Math.round(cpuPercent) + "% · RAM " + Math.round(ramPercent) + "%"
         if (root && pluginKey) root.updateNotchData(pluginKey, notchIcon, notchText)
       } catch (e) {
         resultMessage = "Monitor data unavailable"
       }
     })
+  }
+
+  function restoreSelection(pid) {
+    selectedIndex = 0
+    for (var i = 0; i < processes.length; i++) {
+      if (processes[i].pid === pid) { selectedIndex = i; break }
+    }
+    processList.currentIndex = selectedIndex
+    if (processes.length) processList.positionViewAtIndex(selectedIndex, ListView.Contain)
   }
 
   function chooseSort(key) {
